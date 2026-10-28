@@ -1,0 +1,31 @@
+# ===== agent-hub 本地状态（绝不提交） =====
+.dsh-hub/
+.hub/
+*.token
+data/hub.db
+data/hub.db-*
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ===== 依赖与构建产物 =====
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+target/
+
+# ===== 环境变量与密钥 =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
