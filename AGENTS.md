@@ -178,15 +178,15 @@ hub done  Txxxx --rev 2 --summary "..."
 src/
   backend/     jiang
   frontend/    xu
-  core/        li
+  core/        huang
 tests/         li
-docs/          huang
+docs/          li
 ```
 
 - **测试命令**：`pytest -q`
   - 全员一致；提交前必须本地跑通
   - 跑不通就别 push，先发 `blocker`
-- **代码风格**：`<待填：例如 black + ruff / prettier + eslint>`
+- **代码风格**：`< black + ruff / prettier + eslint>`
 - **接口先行**：跨模块接口由 lead 在 `docs/API.md` 定义并广播 `decision`；接口变了必须立刻广播，否则别人会按旧接口写
 - **数据/配置**：不进仓库的敏感文件列在 `.gitignore`；示例配置放 `config/*.example`
 
