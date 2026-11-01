@@ -28,4 +28,4 @@ target/
 .env.*
 !.env.example
 *.pem
-*.key
+*.key*.bak
