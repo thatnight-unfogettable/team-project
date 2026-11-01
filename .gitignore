@@ -2,6 +2,7 @@
 .dsh-hub/
 .hub/
 *.token
+*.bak
 data/hub.db
 data/hub.db-*
 
@@ -28,6 +29,4 @@ target/
 .env.*
 !.env.example
 *.pem
-*.key*.bak
-# ===== agent-hub 必需规则（脚本自动补齐） =====
-*.bak
+*.key
