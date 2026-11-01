@@ -29,3 +29,5 @@ target/
 !.env.example
 *.pem
 *.key*.bak
+# ===== agent-hub 必需规则（脚本自动补齐） =====
+*.bak
