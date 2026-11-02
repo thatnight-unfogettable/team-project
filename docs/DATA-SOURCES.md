@@ -14,7 +14,7 @@
 |---|---|---|---|
 | 研究范围 | OSM 官方校园多边形 `way 300917756`「中山大学(广州校区南校园)」，1,201,723 m²、114 个顶点 | 高（官方校园边界） | 边界与校园实际围墙可能有出入 |
 | 建筑轮廓、路网 | OpenStreetMap（ODbL 1.0），经 OSM 主 API 拉取，再按校园多边形裁切 | 高（人工测绘，有几何噪声） | 轮廓简化、缺漏 |
-| 地图底图（道路 / 楼名） | 同一份 `ways.json` + 建筑名离线渲染成 `data/basemap.js`：**296 段道路**（四档线型）/ **60 条楼名**；水系当前 **0 处** | 高（与算路同源） | 缺湖、缺路名（OSM 抓取受阻） |
+| 地图底图（道路 / 楼名 / 湖） | 同一份 `ways.json` + 建筑名离线渲染成 `data/basemap.js`：**296 段道路**（四档线型）/ **60 条楼名** + **1 条湖名**；湖是路网环路反推的**示意轮廓**（`approx`，16,814 m²） | 道路/楼名 高（与算路同源）；湖 **示意** | 湖非测绘数据；**缺路名**（OSM 抓取受阻） |
 | 太阳位置 | NOAA / 天文年历简化算法（本地计算） | 高（1950–2050 内约 0.01°） | 未计大气折射、半影 |
 | 建筑高度 | 21 栋有 `building:levels`（×3.2 m）；264 栋估算 12 m；人工覆盖可选 | **中低**（本项目最大的不确定性） | 估算栋偏差，**方向双向**（见 4.2） |
 | 阴影 | 棱柱阴影几何 `L = h / tan(高度角)`，取凸包包络 | 中高（高度可靠时） | 高度误差 + 低角度放大 |
@@ -35,7 +35,7 @@
 | 建筑轮廓 | `building=*` 的 way，含 `name`、`height`、`building:levels`；**按质心落在校园多边形内才算** | OSM 主 API | ODbL 1.0 | `data/buildings.js`（**285 栋**） |
 | 步行路网 | `highway` ∈ footway/path/pedestrian/service/residential/unclassified/living_street/steps；**按路段中点落在校园内才算** | 同上 | ODbL 1.0 | `data/raw/ways.json` → `data/routes.js` |
 | 浏览器端路网包 | `data/graph.js`（**101.2 KB**）：**474 节点 / 613 边**（边长毫米精度）+ **31 帧 × 613 条的暴晒千分比（0–1000，整数）** + **53 个可选中大地名**（`anchors`）+ `main` 标志（466 个主网节点可吸附）；由 `build.py routes` 生成 | 由预计算产物打包 | ODbL 1.0 | `data/graph.js` → `js/router.js` 现场跑 Dijkstra |
-| 地图底图包 | `data/basemap.js`（**31.5 KB**）：`roads` **296 段**（原始 **297 条 way** 按可视范围 bbox±60 m 裁切；`t` 线型 ∈ `main` / `local` / `service` / `path`，`p` 折线点）+ `water` **0 处**（`{n,p,approx}`）+ `labels` **60 条**楼名（`{n,x,y,k,r,a}`：名称 / 坐标 / 类型 `b`=建筑 / 重要度档 / 底面积；另有顶层 `roadCount` / `sourceWays` / `waterCount` / `approxWater`）；由 `build.py basemap` 纯离线生成 | 由本地 `data/raw/ways.json` 离线生成 | ODbL 1.0 | `data/basemap.js` → `js/map.js` 底图层 |
+| 地图底图包 | `data/basemap.js`（**32.2 KB**）：`roads` **296 段**（原始 **297 条 way** 按可视范围 bbox±60 m 裁切；`t` 线型 ∈ `main` / `local` / `service` / `path`，`p` 折线点）+ `water` **1 处**（`{n,p,approx}`，园东湖示意轮廓，`approx: true`）+ `labels` **61 条**（60 条楼名 `k=b` + 1 条湖名 `k=w`；`{n,x,y,k,r,a}`：名称 / 坐标 / 类型 / 重要度档 / 底面积；另有顶层 `roadCount` / `sourceWays` / `waterCount` / `approxWater`）；由 `build.py basemap` 纯离线生成 | 道路/楼名来自 `data/raw/ways.json`；湖来自 `data/raw/water.json`（`lakering` 反推） | ODbL 1.0（湖为示意） | `data/basemap.js` → `js/map.js` 底图层 |
 | 建筑高度 | 见第 4 节 | OSM 标签 + 人工覆盖 | ODbL 1.0 / 自采 | `data/buildings.js` 的 `h`、`src` |
 | 太阳位置 | 由经纬度 + 时刻直接算出，不依赖外部服务 | 本地代码 `solar_position()` | 公共算法 | `data/meta.js` 的 `frames[].sun` |
 | 演示日期 | `DEMO_DATE = "2026-11-02"`（换日期的理由见 3.4） | 手动配置 | — | `data/meta.js` 的 `date` |
@@ -94,8 +94,11 @@ OpenStreetMap 的数据（建筑轮廓、道路、`height` / `building:levels` �
 | `python tools/build.py fetch` | Overpass 优先，任一镜像失败**自动降级**到 OSM 主 API | 网络正常、想走 Overpass 时 | 视网络 |
 | `python tools/build.py import buildings.json ways.json` | 用浏览器/overpass-turbo 手动导出的 Overpass JSON 落盘 | 全都不通时的**离线兜底**（已实现并测过） | 秒级 |
 | `python tools/build.py check` | **只测 Overpass** 连通性，用于诊断"是 Overpass 挂了还是网挂了" | 排障 | — |
-| `python tools/build.py basemap` | 从本地 `data/raw/ways.json` 生成底图 `data/basemap.js`（296 段道路 / 60 条楼名 / 水系） | 任何时候，**纯离线、不联网** | 秒级 |
-| `python tools/build.py water` | 联网补抓 `natural=water` → `data/raw/water.json`、道路 `name` → `data/raw/roadnames.json`；抓完再跑一次 `basemap` 才上图 | 网络可用时 | **当前不可用**（OSM 抓取受阻） |
+| `python tools/build.py basemap` | 从本地 `data/raw/ways.json` + `data/raw/water.json` 生成底图 `data/basemap.js`（296 段道路 / 1 处示意水面 / 61 条标注） | 任何时候，**纯离线、不联网** | 秒级 |
+| `python tools/build.py lakering --list` | 在完整路网（1194 节点 / 1373 边）里枚举闭合环，列出"像湖"的候选空块（面积 4000–80000 m²、周长 380–1500 m） | 需要湖但没有 OSM 水系时，**纯离线** | 秒级 |
+| `python tools/build.py lakering --pick 1 --shrink 0.06 --smooth 2 --name 园东湖` | 取第 N 个候选，向内收 6%、2 轮 Chaikin 平滑，写 `data/raw/water.json`（`approx: true`） | 候选指认后 | 秒级 |
+| `python tools/build.py waterblob --x 300 --y 180 --w 240 --h 150` | 按米坐标放一块椭圆示意水面（48 顶点），写 `data/raw/water.json`（`approx: true`） | 快速试位置/大小 | 秒级 |
+| `python tools/build.py water` | 联网补抓 `natural=water` → `data/raw/water.json`、道路 `name` → `data/raw/roadnames.json`；抓完再跑一次 `basemap` 才上图 | 网络可用时（湖已有示意版，此命令主要补**路名**） | **当前不可用**（OSM 抓取受阻） |
 
 **主 API 的合规性**：`/api/0.6/map` 对单次请求的 bbox 面积有上限（**0.25 平方度**），本项目 bbox 约 **0.00022 平方度**（0.0127° × 0.0176°），远低于上限；一次请求、带 User-Agent、不循环拉取，符合 OSM 使用政策。
 
@@ -408,7 +411,7 @@ pair1（学生饭堂 → 老年人活动中心）14:00：**17.6 分钟 / 16.5 �
 
 > "15 分"是 14.8 分钟四舍五入到整分钟的显示值；精确值（14.8）在被追问时再给。
 
-**实现位置**：`js/core.js` 的 `CORE.shadeMeters(route)` 算阴影米数/覆盖率；`WALK_SPEED = 1.25` 在 `js/core.js` 顶部**单独声明**，并注释"必须与 `tools/build.py` 的 `WALK_SPEED` 一致"。**这是一处刻意的重复常量**：前端不能 `require` Python，只能靠注释 + 冒烟测试的 `shadeMeters` 断言锁住。当前冒烟测试 **97 条断言全过**。
+**实现位置**：`js/core.js` 的 `CORE.shadeMeters(route)` 算阴影米数/覆盖率；`WALK_SPEED = 1.25` 在 `js/core.js` 顶部**单独声明**，并注释"必须与 `tools/build.py` 的 `WALK_SPEED` 一致"。**这是一处刻意的重复常量**：前端不能 `require` Python，只能靠注释 + 冒烟测试的 `shadeMeters` 断言锁住。当前冒烟测试 **101 条断言全过**。
 
 ### 7.7 采样精度：为什么正午"最快路线阴影覆盖只有 3%"
 
@@ -429,21 +432,37 @@ pair1（学生饭堂 → 老年人活动中心）14:00：**17.6 分钟 / 16.5 �
 - **为什么不矛盾**：阴影（几何）是预计算的，路径选择是现场跑的；两者共用同一份 `exposed` 边权，所以"现场算"不是另一套近似。
 - **短距离会"没差异"**：怀士堂 → 黑石屋 **298 米**，四个时刻两条路几乎相同（少晒 0.0~0.1 分钟）。阴影规划只对**长距离、且有平行道路**的场景有意义，1113 米横穿校园才有 4.0 分钟空间——这一点我们主动写进边界。
 
-### 7.9 底图要素来源与降级（道路 296 段 / 楼名 60 条 / 水系 0 处）
+### 7.9 水系的替代来源（无 OSM 依赖）
+
+**结论先行**：页面上的湖（园东湖）**不是 OSM 测绘图元**，而是从路网几何反推的**示意轮廓**（`approx: true`），页面画**半透明填充 + 虚线边**，图例写「水系」。道路与楼名仍然是真实 OSM 数据；**路名仍缺**（`data/raw/roadnames.json` 为空，路上不写字），这条降级没有变。
+
+**为什么不用 OSM 水系**：本次 OSM 全线不通（本机直连超时、代理 502，Overpass 4 个镜像 + 法国站 + OSM 主 API 全部失败），wikidata 也没有园东湖条目——等数据不如换方法。
+
+**算法（`build.py lakering`，可复现，不是手糊多边形）**：
+
+1. 从 `data/raw/ways.json` 建**完整路网**：**1194 节点 / 1373 边**（只取几何，不按通行性裁切）；
+2. 用生成森林的非树边枚举**基本环**（每个环 = 一条非树边 + 对应的树上路径）；
+3. 过滤：环面积 **4000–80000 m²**、周长 **380–1500 m**、质心在校园内；按**环内建筑占比**从低到高排序（越低越像湖，湖面不会有建筑）；
+4. 人工在图上指认：选校园东侧中部、中心 **(536, −85) 米** 的空块；
+5. 多边形向内收 **6%**（`--shrink 0.06`，补偿路中线到湖岸的路宽），再做 **2 轮 Chaikin 切角平滑**（`--smooth 2`，可 0–4），得到 **40 顶点 / 16,814 m²（≈1.7 万 m²）**，写入 `data/raw/water.json` 并标 `approx: true`；
+6. 再跑 `python tools/build.py basemap` 重新生成 `data/basemap.js`，页面才画上去。
+
+**快速试位置的另一条命令**：`python tools/build.py waterblob --x 300 --y 180 --w 240 --h 150` —— 按米坐标放一块带轻微起伏的椭圆示意水面（48 顶点），同样写 `data/raw/water.json` 并标 `approx`。
 
 页面上的道路与楼名**不是手绘、不是示意图**，而是由 `build.py basemap` 从本地 OSM 数据离线渲染：
 
 | 图层 | 数据 | 数量 | 来源 / 规则 | 当前状态 |
 |---|---|---|---|---|
 | 道路 `roads` | 折线 `{t,p}`，四档线型 `main` / `local` / `service` / `path` | **296 段** | `data/raw/ways.json` 原始 **297 条 way**，按可视范围 bbox±60 m 裁切后得到 296 段 | ✅ 已绘制 |
-| 楼名 `labels` | `{n,x,y,k,r,a}` | **60 条** | 285 栋里 **68 栋有 name**；过滤 `572`、`532 533`、`东区3180` 等 OSM 编号型 / 流水号型垃圾名；按 `r`（重要度档）→ 底面积 `a` 降序排 | ✅ 已绘制（1400×900 实际画出 50 个，其余被碰撞避让跳过） |
-| 水系 `water` | `{n,p,approx}` | **0 处** | 需 `natural=water` 几何，本次 OSM 抓取全线不通 | ⬜ 有意不绘制 |
+| 楼名 `labels`（`k=b`） | `{n,x,y,k,r,a}` | **60 条** | 285 栋里 **68 栋有 name**；过滤 `572`、`532 533`、`东区3180` 等 OSM 编号型 / 流水号型垃圾名；按 `r`（重要度档）→ 底面积 `a` 降序排 | ✅ 已绘制（1400×900 实际画出 50 个，其余被碰撞避让跳过） |
+| 湖名 `labels`（`k=w`） | `{n,x,y,k,r,a}` | **1 条** | 与水面同名「园东湖」，`r=1`，`a=16814`；12.5 px 深蓝色，比楼名大一号 | ✅ 已绘制（示意） |
+| 水系 `water` | `{n,p,approx}` | **1 处** | `lakering` 环反推 + 内收 6% + 2 轮平滑；`approx: true` | ✅ 已绘制（**示意轮廓**，半透明 + 虚线边） |
 
 **为什么段数是 296 而不是 297**：297 是 `ways.json` 里原始 OSM way 条数；底图按可视范围裁切后，最终得到 296 段折线——所以"**296 段 ≠ 297 条**"，别把段数当 way 数，也别把两者混着写。
 
-**降级说明（必须能说清）**：湖与路名需要现场联网补抓（`build.py water`），本次网络下 Overpass 4 个镜像 + 法国站 + OSM 主 API 全部失败（直连超时 / 代理 502），所以**当前版本不绘制水系、道路上不写名字**。这是**有意的降级，不是 bug**：宁可不画，也不拿示意图形冒充真实数据。网络恢复后的路径：`python tools\build.py water` → `python tools\build.py basemap`。
+**示意不是测绘（必须能说清）**：湖面 = 几何推断 + 人工指认，**位置和量级可信、岸线细节不可信**；所以数据标 `approx: true`、页面画虚线边、图例写「水系」。真实岸线要等网络恢复后 `python tools/build.py water` 抓 `natural=water` 再替换。**不说"园东湖的准确边界"**，只说"约 1.7 万 m² 的示意轮廓（中心 (536, −85) 米）"。
 
-**与算路的关系**：底图与算路都从同一份 `ways.json` 派生——`basemap` 只负责"画"，`routes` 负责"算"（613 边图）。画的路和算的路不是两套数据，所以不会出现"地图上明明有路、算路却说没路"的矛盾。
+**与算路的关系**：底图与算路都从同一份 `ways.json` 派生——`basemap` 只负责"画"，`routes` 负责"算"（613 边图）。画的路和算的路不是两套数据，所以不会出现"地图上明明有路、算路却说没路"的矛盾；湖不参与算路。
 
 ---
 
@@ -463,9 +482,13 @@ python tools\build.py import buildings.json ways.json
 # 3) 预计算
 python tools\build.py all        # fetch/osm + 阴影 + 路线（osm 之后跑 shadows && routes 也可以）
 
-# 4) 底图（道路 / 楼名；纯离线，读 data/raw/ways.json）
+# 4) 底图（道路 / 水系 / 标注；纯离线，读 data/raw/ways.json + data/raw/water.json）
 python tools\build.py basemap
-# 水系与路名需要网络：python tools\build.py water （当前 OSM 抓取受阻，未跑出）
+# 湖没有 OSM 数据时，用路网环路反推（或 waterblob 按坐标试一块）：
+python tools\build.py lakering --list
+python tools\build.py lakering --pick 1 --shrink 0.06 --smooth 2 --name 园东湖
+python tools\build.py waterblob --x 300 --y 180 --w 240 --h 150
+# 路名仍需网络：python tools\build.py water （当前 OSM 抓取受阻，未跑出）
 ```
 
 **必须成立的一致性断言（交付前逐条核对）**：
@@ -477,8 +500,8 @@ python tools\build.py basemap
 5. `data/routes.js` 两对起终点都有 `minutes` / `sun_minutes` / `length_m`；14:00 pair0 应为 14.8 / 14.0 / 1113 与 15.4 / 10.0 / 1157；
 6. `data/height-report.csv` 行数 = **61**（60 行数据 + 表头），6 列，第一行是「伍舜德图书馆」；
 7. `data/graph.js` 的 `nodes` / `main` 各 474 项（`main` 真值 466）、`edges` 613 条、`exposed` 31 帧 × 613 条、`anchors` **53** 个、`coolFactor` 6、`walkSpeed` 1.25；
-8. `data/basemap.js` 的 `roads` **296 段**（`t` 四档齐全、`p` 均在 bbox±60 m 内）、`labels` **60 条**（全部落在校园 bbox 内、按重要度排序）、`water` **0 处**、`sourceWays` 297、`roadCount` 296；
-9. `node tools/smoke.js` **97 条断言全绿**（退出码 0）——含 6 条校园边界回归断言（建筑质心在校内、路线采样点在校内、每帧阴影环与校园有交集、14:00 两条路线最大偏离 ≤120 m、校园名字、面积区间）、**7 条底图断言**（结构完整 / 道路来自本地 OSM / 四档线型 / 坐标范围 / 楼名在校内 / 标注数 ≥60 / 按重要度排序）与 **17 条算路断言**（62 组合对拍：长度全等、暴晒差 ≤0.05 分钟；含同点提示、往返对称、5 km 外拒绝、4 条地图点选）。
+8. `data/basemap.js` 的 `roads` **296 段**（`t` 四档齐全、`p` 均在 bbox±60 m 内）、`labels` **61 条**（60 楼名 `k=b` + 1 湖名 `k=w`，全部落在校园 bbox 内、按重要度排序）、`water` **1 处**（`approx: true`，40 顶点，面积约 16,814 m²）、`sourceWays` 297、`roadCount` 296、`waterCount` 1、`approxWater` 1；
+9. `node tools/smoke.js` **101 条断言全绿**（退出码 0）——含 6 条校园边界回归断言（建筑质心在校内、路线采样点在校内、每帧阴影环与校园有交集、14:00 两条路线最大偏离 ≤120 m、校园名字、面积区间）、**7 条底图断言**（结构完整 / 道路来自本地 OSM / 四档线型 / 坐标范围 / 楼名在校内 / 标注数 ≥60 / 按重要度排序）、**4 条湖断言**（园东湖已画上 / 面积 5000–40000 m² / `approx=true` / 湖名以 `k=w` 进标注表）与 **17 条算路断言**（62 组合对拍：长度全等、暴晒差 ≤0.05 分钟；含同点提示、往返对称、5 km 外拒绝、4 条地图点选）。
 
 ---
 
@@ -517,7 +540,8 @@ python tools\build.py basemap
 | 沿演示路线两侧建筑高度逐栋核（写进 `HEIGHT_OVERRIDES`） | 264 栋是 12 m 默认值，是主误差源 | 待办（演示前必做，先填 CSV 前 10 行） |
 | 11-02 当天实拍对比（固定时刻 + 固定机位） | 目前没有新日期的实拍；旧数据不能复用 | 待办（演示当天可拍） |
 | 页面截图（14:00 / 12:00 / 16:40 / 07:00 四帧 + 卡片特写 + 低置信度横幅） | PPT 配图，沙箱无浏览器 | 待办 |
-| `data/basemap.js` 的道路 / 楼名底图 | 视觉底图与算路同源，证明"不是示意图" | **已完成**（296 段道路 / 60 条楼名 / 水系 0 处） |
-| 水系 + 路名补抓（`build.py water` → `basemap`） | 湖与路名当前缺失，属有意降级 | 待办（网络恢复后跑两条命令） |
-| `node tools/smoke.js` **97 条断言全过**（含校园边界回归 + 底图断言） | "测试通过"这句话现在可以说了 | **已完成** |
+| `data/basemap.js` 的道路 / 楼名底图 | 视觉底图与算路同源，证明"不是示意图" | **已完成**（296 段道路 / 61 条标注） |
+| 湖：路网环路反推的示意轮廓（`lakering`） | 水系 OSM 抓不到，改用几何反推；标 `approx`、画虚线边 | **已完成**（1 处，16,814 m²，40 顶点，示意） |
+| 路名补抓（`build.py water` → `basemap`） | 路名仍空（`roadnames.json`），属有意降级 | 待办（网络恢复后跑） |
+| `node tools/smoke.js` **101 条断言全过**（含校园边界回归 + 底图/湖断言） | "测试通过"这句话现在可以说了 | **已完成** |
 | 树冠/DSM 模型 | 已知最大缺口，口头讲即可 | 不做（未来工作） |
