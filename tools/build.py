@@ -1652,6 +1652,18 @@ def cmd_lakering(args):
     shrink = 1.0 - max(0.0, min(0.4, args.shrink))
     ring = [[round(cx + (p[0] - cx) * shrink, 1), round(cy + (p[1] - cy) * shrink, 1)]
             for p in c["ring"]]
+
+    # 环路的顶点是路口，直接连起来会是个硬邦邦的多边形；Chaikin 切角两轮
+    # 让它像自然岸线。切角结果一定在原多边形内部，不会侵占到路上。
+    for _ in range(max(0, min(4, args.smooth))):
+        nxt = []
+        n = len(ring)
+        for i in range(n):
+            x1, y1 = ring[i]
+            x2, y2 = ring[(i + 1) % n]
+            nxt.append([round(0.75 * x1 + 0.25 * x2, 1), round(0.75 * y1 + 0.25 * y2, 1)])
+            nxt.append([round(0.25 * x1 + 0.75 * x2, 1), round(0.25 * y1 + 0.75 * y2, 1)])
+        ring = nxt
     ring.append(ring[0][:])
 
     path = os.path.join(RAW, "water.json")
@@ -1760,6 +1772,7 @@ def main():
     lr.add_argument("--pick", type=int, default=1, help="取第几个候选，默认 1")
     lr.add_argument("--list", action="store_true", help="只列出候选不写入")
     lr.add_argument("--shrink", type=float, default=0.06, help="向内收的比例，默认 0.06")
+    lr.add_argument("--smooth", type=int, default=2, help="岸线平滑轮数（Chaikin），默认 2")
     lr.add_argument("--name", default="园东湖", help="水面名称，默认 园东湖")
     args = ap.parse_args()
     cmd = args.cmd or "check"
