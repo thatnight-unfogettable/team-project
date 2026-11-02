@@ -1,4 +1,4 @@
-﻿/* ============================================================
+/* ============================================================
    凉径 ShadeRoute Lite —— 浏览器控制台自检脚本
    ============================================================
    用途：不用截图、不用开发者工具翻 DOM，粘一次就能确认
@@ -179,6 +179,41 @@
     var same = R.solve([anchors[0].x, anchors[0].y], [anchors[0].x, anchors[0].y], cur);
     line(same.ok === false, '起点=终点时给出提示', same.reason);
     line(R.snap(5000, 5000) === null, '离校园很远的点会被拒绝');
+  }
+
+  /* ---- 4.5 底图要素：道路 / 水系 / 地名标注 ---- */
+  var BASE = window.DATA_BASEMAP || null;
+  line(!!BASE, '底图数据已加载（data/basemap.js）',
+    BASE ? (BASE.roads.length + ' 段道路 / ' + BASE.labels.length + ' 个地名') : '没加载到');
+  if (BASE) {
+    var kinds = {};
+    BASE.roads.forEach(function (r) { kinds[r.t] = (kinds[r.t] || 0) + 1; });
+    line(!!(kinds.main && kinds.local && kinds.service && kinds.path),
+      '道路分四档线型（主干 / 校内 / 服务 / 步道）', JSON.stringify(kinds));
+
+    var junk = BASE.labels.filter(function (L) {
+      return /^[\d\s\-]+$/.test(L.n) || /^(东区|西区|南区|北区)\d*$/.test(L.n);
+    });
+    line(junk.length === 0, '地名里没有编号型垃圾值（572 / 东区3180 之类）',
+      junk.length + ' 个');
+
+    // 画布上真的画了字吗：看画布的"非背景像素"里有没有深色文字像素
+    var cv = document.getElementById('map');
+    var drawnLabels = 0;
+    if (cv && cv.getContext) {
+      var c2d = cv.getContext('2d');
+      var img = c2d.getImageData(0, 0, cv.width, cv.height).data;
+      var dark = 0;
+      for (var pi = 0; pi < img.length; pi += 4 * 97) {     // 抽样，别把浏览器卡死
+        if (img[pi] < 110 && img[pi + 1] < 110 && img[pi + 2] < 120) { dark++; }
+      }
+      drawnLabels = dark;
+    }
+    line(drawnLabels > 0, '画布上确实画上了深色文字/线条（抽样像素检查）',
+      drawnLabels + ' 个深色采样点');
+
+    line(BASE.water.length > 0, '水系数据：' + (BASE.water.length ? BASE.water.length + ' 处水面' : '暂无（OSM 抓取受阻，见 README）'),
+      BASE.water.map(function (w) { return w.n; }).join('、'));
   }
 
   /* ---- 5. 打印摘要（这段可以直接念给老师听，或截图） ---- */

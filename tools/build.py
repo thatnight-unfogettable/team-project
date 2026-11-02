@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """凉径 ShadeRoute Lite —— 离线预计算工具（零第三方依赖）
 
@@ -1202,6 +1202,278 @@ def _write_graph(buildings, adj, edges, nodes, main, frames, graph_frames):
           % (len(node_xy), len(gedges), len(graph_frames), len(anchors)))
 
 
+# ---------------------------------------------------------------- 底图要素
+# 页面第一版只画了"楼 + 阴影 + 路线"，看上去像一堆色块，不像地图。
+# 这里把 OSM 里本来就有、但之前为了算路被丢掉的信息捡回来：
+#   道路线（含等级）、水系（data/raw/water.json）、地名标注（楼名 / 湖名 / 路名）。
+# 全部离线生成，不联网 —— 数据已经在 data/raw/ways.json 里。
+
+# OSM highway 值 -> 底图线型档位（粗细/颜色在 js/map.js 里定）
+ROAD_CLASS = {
+    "trunk": "main", "primary": "main", "secondary": "main", "tertiary": "main",
+    "residential": "local", "unclassified": "local", "living_street": "local", "road": "local",
+    "service": "service", "track": "service",
+    "footway": "path", "path": "path", "pedestrian": "path", "steps": "path",
+    "cycleway": "path", "corridor": "path",
+}
+
+# 优先标注的地标：数字越小越先占位置（版面有限，先让这些名字显示出来）
+LABEL_TIER = {
+    "怀士堂": 1, "黑石屋": 1, "马丁堂": 1, "格兰堂": 1, "惺亭": 1,
+    "伍舜德图书馆": 1, "南校园图书馆": 1, "学生饭堂": 1, "研究生饭堂": 1, "教工饭堂": 1,
+    "岭南学院": 1, "岭南堂": 1, "老年人活动中心": 1, "新体育馆": 1, "西大球场": 1,
+    "善衡堂": 1, "哲生堂": 1, "怀士堂前草坪": 2, "园东湖": 1, "竹园": 2, "榕园": 2,
+}
+
+
+def _poly_centroid(ring):
+    """多边形面积重心；遇到退化多边形退回顶点平均"""
+    a = cx = cy = 0.0
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        cross = x1 * y2 - x2 * y1
+        a += cross
+        cx += (x1 + x2) * cross
+        cy += (y1 + y2) * cross
+    if abs(a) < 1e-9:
+        return (sum(p[0] for p in ring) / n, sum(p[1] for p in ring) / n)
+    a *= 0.5
+    return (cx / (6.0 * a), cy / (6.0 * a))
+
+
+def _load_optional_raw(name, default):
+    path = os.path.join(RAW, name)
+    if not os.path.exists(path):
+        return default
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def cmd_basemap(_args):
+    """生成 data/basemap.js：道路线 + 水系 + 地名标注（纯本地）"""
+    print("[1/4] 读取本地路网 data/raw/ways.json ...")
+    path = os.path.join(RAW, "ways.json")
+    if not os.path.exists(path):
+        sys.exit("缺 data/raw/ways.json —— 先跑 python tools/build.py osm")
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    nodes, ways = raw["nodes"], raw["ways"]
+    print("      节点 %d / 道路 %d 条" % (len(nodes), len(ways)))
+
+    print("[2/4] 投影到米坐标、按等级归类 ...")
+    # OSM 返回的是"穿过这个框的整条路"，会伸出框很远。按可视范围裁一刀：
+    # 既省体积，也保证画出来的东西都在这张图上（画布外的不需要）。
+    bx0, by0, bx1, by1 = bbox_m()
+    PAD = 60.0
+    clip = (bx0 - PAD, by0 - PAD, bx1 + PAD, by1 + PAD)
+
+    def _inside(p):
+        return clip[0] <= p[0] <= clip[2] and clip[1] <= p[1] <= clip[3]
+
+    roads, dropped, clipped = [], 0, 0
+    for way in ways:
+        pts = []
+        for nid in way.get("nodes") or []:
+            p = nodes.get(str(nid))
+            if p is None:
+                p = nodes.get(nid)
+            if not p:
+                continue
+            x, y = to_xy(p[0], p[1])
+            x, y = round(x, 1), round(y, 1)
+            if pts and abs(pts[-1][0] - x) < 0.06 and abs(pts[-1][1] - y) < 0.06:
+                continue
+            pts.append([x, y])
+        if not pts:
+            continue
+        # 把顶点序列切成"连续在框内"的若干段，跨出框的部分直接丢掉
+        runs, cur = [], []
+        for p in pts:
+            if _inside(p):
+                cur.append(p)
+            else:
+                if len(cur) >= 2:
+                    runs.append(cur)
+                cur = []
+        if len(cur) >= 2:
+            runs.append(cur)
+        if not runs:
+            dropped += 1
+            continue
+        if len(runs) > 1 or len(sum(runs, [])) < len(pts):
+            clipped += 1
+        for run in runs:
+            roads.append({"t": ROAD_CLASS.get((way.get("hw") or "").strip(), "local"), "p": run})
+    print("      保留 %d 段（丢弃 %d 条整条在框外，%d 条被裁掉伸出部分）"
+          % (len(roads), dropped, clipped))
+
+    print("[3/4] 水系 data/raw/water.json ...")
+    water, approx_n = [], 0
+    for item in _load_optional_raw("water.json", []):
+        ring = [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in (item.get("ring") or [])]
+        if len(ring) < 3:
+            continue
+        is_approx = bool(item.get("approx", False))
+        approx_n += 1 if is_approx else 0
+        water.append({"n": item.get("name") or "水面", "p": ring, "approx": is_approx})
+    if water:
+        print("      水面 %d 处（其中 %d 处为示意轮廓）" % (len(water), approx_n))
+    else:
+        print("      没有 water.json，跳过（页面不会画湖）")
+
+    print("[4/4] 生成地名标注 ...")
+    labels, junk = [], 0
+    for b in _load_buildings():
+        nm = (b.get("name") or "").strip()
+        ring = b.get("p") or []
+        if not nm or len(ring) < 3:
+            continue
+        # OSM 里有一批"名字"其实是编号或垃圾值（572 / 532 533 / 东区3180），
+        # 画到地图上就是一堆无意义数字，直接不要。
+        bare = "".join(ch for ch in nm if not ch.isdigit()).strip(" -·、,")
+        if not any("\u4e00" <= ch <= "\u9fff" for ch in nm):
+            junk += 1
+            continue
+        if bare in ("", "东区", "西区", "南区", "北区", "中区", "宿舍", "栋", "号楼", "学生宿舍"):
+            junk += 1
+            continue
+        if len(bare) < 2:
+            junk += 1
+            continue
+        cx, cy = _poly_centroid(ring)
+        labels.append({"n": nm, "x": round(cx, 1), "y": round(cy, 1), "k": "b",
+                       "r": LABEL_TIER.get(nm, 2), "a": int(round(_ring_area(ring)))})
+    if junk:
+        print("      丢弃 %d 个编号型/无中文的假地名" % junk)
+    for item in water:
+        ring = item["p"]
+        cx, cy = _poly_centroid(ring)
+        labels.append({"n": item["n"], "x": round(cx, 1), "y": round(cy, 1), "k": "w",
+                       "r": 1, "a": int(round(_ring_area(ring)))})
+    for item in _load_optional_raw("roadnames.json", []):
+        labels.append({"n": item["name"], "x": float(item["x"]), "y": float(item["y"]),
+                       "k": "r", "r": int(item.get("rank", 1)), "a": 0,
+                       "ang": float(item.get("angle", 0))})
+
+    # 先按"重要程度"排好序，页面逐条尝试摆放，放不下就跳过（避免字压字）
+    labels.sort(key=lambda d: (d["r"], -d["a"], d["n"]))
+    write_js("basemap.js", "DATA_BASEMAP", {
+        "roads": roads,
+        "water": water,
+        "labels": labels,
+        "roadCount": len(roads),
+        "sourceWays": len(ways),
+        "waterCount": len(water),
+        "approxWater": approx_n,
+    })
+    print("      -> data/basemap.js：道路 %d 条 / 水面 %d 处 / 标注 %d 条"
+          % (len(roads), len(water), len(labels)))
+
+
+def cmd_water(_args):
+    """抓水系与路名（需要网络；抓不到就保持现状，不影响页面运行）。
+
+    为什么单独一条命令：这两个要素对"地图像不像地图"影响很大，但对算路没有影响。
+    校园里常见的湖（园东湖）在 OSM 里是 natural=water 的闭合 way/relation，
+    路名在 highway way 的 name tag 上。抓下来存成 data/raw/，
+    再跑一次 basemap 就会出现在页面上。
+    """
+    bbox = "%s,%s,%s,%s" % (BBOX[0], BBOX[1], BBOX[2], BBOX[3])
+    print("[1/2] 抓水系（natural=water / waterway / landuse=reservoir）...")
+    q1 = ('[out:json][timeout:120];('
+          'way["natural"="water"](%s);'
+          'relation["natural"="water"](%s);'
+          'way["waterway"](%s);'
+          'way["landuse"="reservoir"](%s);'
+          ');out tags geom;' % (bbox, bbox, bbox, bbox))
+    try:
+        elems = _overpass(q1, "水系")
+    except SystemExit:
+        print("      抓不到水系（网络不通）。页面照常运行，只是不画湖。")
+        return
+
+    water, unnamed = [], 0
+    for el in elems:
+        tags = el.get("tags") or {}
+        name = tags.get("name") or ""
+        geom = el.get("geometry")
+        if not geom:
+            # relation 只取闭合的成员 way，够画绝大多数湖
+            continue
+        ring = []
+        for g in geom:
+            if g.get("lat") is None:
+                continue
+            ring.append([round(to_xy(g["lat"], g["lon"])[0], 1),
+                         round(to_xy(g["lat"], g["lon"])[1], 1)])
+        if len(ring) < 4:
+            continue
+        if el.get("type") == "way" and (ring[0] != ring[-1]):
+            continue    # 不闭合的当河道，先跳过（画法不同）
+        if not name:
+            unnamed += 1
+            continue
+        water.append({"name": name, "ring": ring, "approx": False,
+                      "kind": tags.get("natural") or tags.get("waterway") or "water"})
+
+    print("      得到 %d 处有名字的水面（跳过 %d 处无名水面）" % (len(water), unnamed))
+    if water:
+        with open(os.path.join(RAW, "water.json"), "w", encoding="utf-8") as f:
+            json.dump(water, f, ensure_ascii=False, indent=1)
+        print("      -> data/raw/water.json：%s" % "、".join(w["name"] for w in water[:6]))
+
+    print("[2/2] 抓路名（highway 的 name tag）...")
+    q2 = '[out:json][timeout:120];way["highway"]["name"](%s);out tags geom;' % bbox
+    try:
+        elems2 = _overpass(q2, "路名")
+    except SystemExit:
+        print("      抓不到路名（网络不通）。页面照旧，只是路上不写字。")
+        return
+
+    best = {}   # 同名道路取最长的那一条来放字
+    for el in elems2:
+        tags = el.get("tags") or {}
+        name = (tags.get("name") or "").strip()
+        geom = el.get("geometry") or []
+        if not name or len(geom) < 2:
+            continue
+        pts = [to_xy(g["lat"], g["lon"]) for g in geom if g.get("lat") is not None]
+        if len(pts) < 2:
+            continue
+        # 取最长的那一段作为放字的位置（字要放在路比较长、比较直的地方）
+        best_i, best_len = 0, -1.0
+        for i in range(len(pts) - 1):
+            L = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+            if L > best_len:
+                best_len, best_i = L, i
+        if best_len < 25.0:
+            continue
+        a, b = pts[best_i], pts[best_i + 1]
+        mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+        ang = math.degrees(math.atan2(-(b[1] - a[1]), b[0] - a[0]))   # 屏幕坐标角度
+        if abs(ang) > 90:
+            ang -= 180 if ang > 0 else -180
+        total = sum(math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+                    for i in range(len(pts) - 1))
+        if name not in best or total > best[name]["len"]:
+            best[name] = {"name": name, "x": round(mx, 1), "y": round(my, 1),
+                          "angle": round(ang, 1), "len": total,
+                          "rank": 1 if (tags.get("highway") in
+                                        ("trunk", "primary", "secondary", "tertiary")) else 2}
+
+    names = sorted(best.values(), key=lambda d: -d["len"])
+    for item in names:
+        item.pop("len", None)
+    if names:
+        with open(os.path.join(RAW, "roadnames.json"), "w", encoding="utf-8") as f:
+            json.dump(names, f, ensure_ascii=False, indent=1)
+        print("      -> data/raw/roadnames.json：%d 条路名（%s…）"
+              % (len(names), "、".join(n["name"] for n in names[:6])))
+    print("\n再跑一次 python tools/build.py basemap 就会画到页面上。")
+
+
 def cmd_nodes(_args):
     adj, edges, nodes = _build_graph()
     print("度最高的 20 个路网节点（复制 lat,lon 到 tools/build.py 的 OD_PAIRS）：")
@@ -1223,8 +1495,10 @@ def main():
         ("osm", "直接走 OSM 主 API 拉数据（绕过 Overpass）"),
         ("shadows", "预计算阴影帧"),
         ("routes", "预计算路线"),
+        ("basemap", "生成底图要素（道路线 / 水系 / 地名标注）"),
+        ("water", "抓水系与路名（需联网；抓不到不影响页面）"),
         ("nodes", "列出候选路网节点"),
-        ("all", "fetch + shadows + routes"),
+        ("all", "fetch + shadows + routes + basemap"),
     ]:
         sub.add_parser(name, help=help_)
     imp = sub.add_parser("import", help="离线兜底：从手动导出的 Overpass JSON 落盘")
@@ -1236,9 +1510,11 @@ def main():
         cmd_fetch(args)
         cmd_shadows(args)
         cmd_routes(args)
+        cmd_basemap(args)
         return
     {"check": cmd_check, "sample": cmd_sample, "fetch": cmd_fetch,
      "shadows": cmd_shadows, "routes": cmd_routes, "nodes": cmd_nodes,
+     "basemap": cmd_basemap, "water": cmd_water,
      "osm": cmd_osm, "import": lambda a: cmd_import(a.files)}[cmd](args)
 
 

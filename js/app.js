@@ -13,6 +13,7 @@ window.APP = (function () {
   var SHADOWS = window.DATA_SHADOWS || [];
   var ROUTES = window.DATA_ROUTES || { pairs: [], frames: [] };
   var GRAPH = window.DATA_GRAPH || null;
+  var BASEMAP = window.DATA_BASEMAP || null;
   var S = window.STRINGS || {};
   var CORE = window.CORE;
 
@@ -161,7 +162,8 @@ window.APP = (function () {
       coolPts: coolPts,
       fromXY: cur.fromXY || null,
       toXY: cur.toXY || null,
-      campusRing: (META.campus && META.campus.ring) || null
+      campusRing: (META.campus && META.campus.ring) || null,
+      basemap: BASEMAP
     });
 
     // ---- 顶部时间与太阳 ----

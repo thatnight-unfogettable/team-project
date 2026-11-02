@@ -319,6 +319,9 @@ footer p { margin: 0; }
 .lg-shade { background: var(--shade); }
 .lg-fast { background: var(--fast); height: 3px; border-radius: 2px; }
 .lg-cool { background: var(--cool); height: 3px; border-radius: 2px; }
+/* 道路：白底 + 灰边，和地图上的画法一致 */
+.lg-road { background: #fffdf4; border: 1px solid #928b78; height: 5px; border-radius: 1px; }
+.lg-water { background: rgba(116, 172, 203, 0.6); border: 1px solid rgba(78, 138, 172, 0.8); }
 /* 建筑高度用色阶表示：左浅右深 */
 .lg-bld { background: linear-gradient(135deg, #b0b2b6 0%, #9a9ca1 45%, #5c616a 100%); border: 1px solid rgba(70, 80, 95, 0.55); }
 

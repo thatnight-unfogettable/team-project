@@ -51,6 +51,7 @@ function loadSandbox() {
     'data/shadows.js',
     'data/routes.js',
     'data/graph.js',
+    'data/basemap.js',
     'content/strings.js',
     'js/core.js'
   ];
@@ -286,6 +287,54 @@ ok('scaleBarMeters：按像素宽度挑刻度',
   CORE.scaleBarMeters(2, 90) === 25 && CORE.scaleBarMeters(0, 90) === 10,
   CORE.scaleBarMeters(1, 90) + '/' + CORE.scaleBarMeters(0.5, 90) + '/' + CORE.scaleBarMeters(2, 90));
 
+/* --- 2.75 底图要素（道路 / 水系 / 地名标注） --- */
+var BASE = W.DATA_BASEMAP;
+ok('data/basemap.js 存在且结构完整',
+  !!BASE && Array.isArray(BASE.roads) && Array.isArray(BASE.water) && Array.isArray(BASE.labels),
+  BASE ? ('道路 ' + BASE.roads.length + ' / 水面 ' + BASE.water.length + ' / 标注 ' + BASE.labels.length) : '缺文件');
+
+ok('道路全部来自本地 OSM 路网（297 条 way，裁切后 296 段）',
+  !!BASE && BASE.sourceWays === 297 && BASE.roads.length > 280,
+  BASE && (BASE.sourceWays + ' 条 way -> ' + BASE.roads.length + ' 段'));
+
+var roadKinds = {};
+(BASE ? BASE.roads : []).forEach(function (r) { roadKinds[r.t] = (roadKinds[r.t] || 0) + 1; });
+ok('道路分成主干道/校内路/服务道/步道四档',
+  !!roadKinds.main && !!roadKinds.local && !!roadKinds.service && !!roadKinds.path,
+  JSON.stringify(roadKinds));
+
+// 每条路至少两个点、坐标都在画布 bbox 内（画到画布外说明投影错了）
+var badRoad = 0, bbm = META.bbox_m;
+(BASE ? BASE.roads : []).forEach(function (r) {
+  if (!r.p || r.p.length < 2) { badRoad++; return; }
+  for (var i = 0; i < r.p.length; i++) {
+    var x = r.p[i][0], y = r.p[i][1];
+    if (x < bbm[0] - 62 || x > bbm[2] + 62 || y < bbm[1] - 62 || y > bbm[3] + 62) { badRoad++; return; }
+  }
+});
+ok('所有道路坐标都在可视范围内（bbox ±60m 裁剪带）', badRoad === 0, '越界路线 ' + badRoad + ' 条');
+
+// 楼名标注必须落在校园里（否则就是又画到校外去了）
+var outsideLabel = 0;
+(BASE ? BASE.labels : []).forEach(function (L) {
+  if (L.k !== 'b') { return; }
+  if (L.x < bbm[0] || L.x > bbm[2] || L.y < bbm[1] || L.y > bbm[3]) { outsideLabel++; }
+});
+ok('楼名标注全部落在校园 bbox 内', outsideLabel === 0, '越界 ' + outsideLabel + ' 个');
+
+var labelNames = (BASE ? BASE.labels : []).map(function (L) { return L.n; });
+ok('楼名标注数量与「有名字的建筑」一致', labelNames.length >= 60,
+  labelNames.length + ' 个地名：' + labelNames.slice(0, 6).join('、') + '…');
+
+// 排序契约：重要地标（r=1）必须排在前面，页面按这个顺序抢位置
+var firstTier = (BASE ? BASE.labels : []).filter(function (L) { return L.r === 1; }).length;
+var tierSorted = true;
+for (var li = 0; BASE && li < BASE.labels.length - 1; li++) {
+  if (BASE.labels[li].r > BASE.labels[li + 1].r) { tierSorted = false; break; }
+}
+ok('标注按重要度排好序（页面靠这个顺序防压字）', tierSorted && firstTier >= 10,
+  '一级地名 ' + firstTier + ' 个');
+
 /* --- 2.8 静态约束（不改数据、不联网、语法可解析） --- */
 var jsFiles = ['js/core.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
 var syntaxBad = [];
@@ -337,7 +386,7 @@ function makeCtx() {
   var ctx = { calls: {} };
   var names = ['setTransform', 'clearRect', 'fillRect', 'save', 'restore', 'beginPath',
     'moveTo', 'lineTo', 'closePath', 'fill', 'stroke', 'drawImage', 'arc',
-    'setLineDash', 'fillText', 'measureText'];
+    'setLineDash', 'fillText', 'strokeText', 'measureText'];
   names.forEach(function (n) {
     ctx[n] = function () { ctx.calls[n] = (ctx.calls[n] || 0) + 1; };
   });

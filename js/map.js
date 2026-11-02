@@ -3,12 +3,16 @@
    责任：xu
    纯 Canvas 2D 自绘，不用任何地图库、不联网。
 
-   图层顺序：
-     1. 地面底色（阳光）
-     2. 阴影（离屏画布整体叠加，避免重叠处变黑）
-     3. 建筑轮廓
-     4. 路线（最快 / 阴凉）
-     5. 起终点标记、比例尺
+   图层顺序（从下到上）：
+     1. 地面底色（阳光）+ 100 m 网格
+     2. 水系（湖/河，可缺省）
+     3. 道路网（主干道 / 校内路 / 服务道 / 步道，四档线型）
+     4. 阴影（离屏画布整体叠加，避免重叠处变黑）
+     5. 建筑轮廓
+     6. 校园边界
+     7. 路线（最快 / 阴凉）
+     8. 地名标注（楼名 / 湖名 / 路名，带白描边、自动避让）
+     9. 起终点标记、比例尺
    ============================================================ */
 
 window.MAP = (function () {
@@ -21,6 +25,16 @@ window.MAP = (function () {
     view: null,          // PROJ.fit() 的结果
     off: null,           // 阴影离屏画布
     offCtx: null
+  };
+
+  var FONT = '"Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif';
+
+  // 路网四档线型：casing = 描边宽，fill = 路面宽（CSS px）
+  var ROAD_STYLE = {
+    main: { casing: 7.0, fill: 5.0, casingColor: 'rgba(146,139,120,0.55)', fillColor: '#fffdf4' },
+    local: { casing: 4.6, fill: 3.0, casingColor: 'rgba(152,145,128,0.45)', fillColor: '#fdfaf0' },
+    service: { casing: 3.0, fill: 1.8, casingColor: 'rgba(158,151,134,0.35)', fillColor: '#fbf7ea' },
+    path: { casing: 0, fill: 1.2, casingColor: null, fillColor: 'rgba(158,146,120,0.55)', dashed: [3, 3] }
   };
 
   function init(canvas) {
@@ -181,6 +195,122 @@ window.MAP = (function () {
     ctx.restore();
   }
 
+  /* ---------- 水系 ---------- */
+  function drawWater(water) {
+    if (!water || !water.length) { return; }
+    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (var i = 0; i < water.length; i++) {
+      var w = water[i];
+      if (!w.p || w.p.length < 3) { continue; }
+      pathPoly(ctx, w.p, view, 1);
+      ctx.fillStyle = w.approx ? 'rgba(126,178,205,0.42)' : 'rgba(116,172,203,0.55)';
+      ctx.fill();
+      ctx.strokeStyle = w.approx ? 'rgba(96,150,180,0.55)' : 'rgba(78,138,172,0.75)';
+      ctx.lineWidth = 1;
+      // 示意轮廓用虚线，一眼能看出"这条边界不是测出来的"
+      if (w.approx) { ctx.setLineDash([6, 4]); }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 道路网 ---------- */
+  function drawRoads(roads) {
+    if (!roads || !roads.length) { return; }
+    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+
+    // 分两遍：先铺所有描边，再铺所有路面。
+    // 否则后画的描边会盖住前一条路的路面，路口看着像断了。
+    var order = ['path', 'service', 'local', 'main'];
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (var pass = 0; pass < 2; pass++) {
+      for (var oi = 0; oi < order.length; oi++) {
+        var kind = order[oi];
+        var st = ROAD_STYLE[kind];
+        if (!st) { continue; }
+        if (pass === 0) {
+          if (!st.casing) { continue; }
+          ctx.strokeStyle = st.casingColor;
+          ctx.lineWidth = st.casing;
+          ctx.setLineDash([]);
+        } else {
+          ctx.strokeStyle = st.fillColor;
+          ctx.lineWidth = st.fill;
+          if (st.dashed) { ctx.setLineDash(st.dashed); } else { ctx.setLineDash([]); }
+        }
+        for (var i = 0; i < roads.length; i++) {
+          var r = roads[i];
+          if (r.t !== kind || !r.p || r.p.length < 2) { continue; }
+          ctx.beginPath();
+          for (var k = 0; k < r.p.length; k++) {
+            var px = view.x(r.p[k][0]), py = view.y(r.p[k][1]);
+            if (k === 0) { ctx.moveTo(px, py); } else { ctx.lineTo(px, py); }
+          }
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /* ---------- 地名标注（白描边 + 自动避让） ---------- */
+  function drawLabels(labels, view, ctx) {
+    if (!labels || !labels.length) { return; }
+    var placed = [];   // 已占用的矩形，防压字
+    var W = state.cssW, H = state.cssH;
+
+    function hits(x, y, w, h) {
+      for (var i = 0; i < placed.length; i++) {
+        var r = placed[i];
+        if (x < r[0] + r[2] && x + w > r[0] && y < r[1] + r[3] && y + h > r[1]) { return true; }
+      }
+      return false;
+    }
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+
+    for (var i = 0; i < labels.length; i++) {
+      var L = labels[i];
+      if (!L || !L.n) { continue; }
+      var isWater = L.k === 'w', isRoad = L.k === 'r';
+      var size = isWater ? 12.5 : (isRoad ? 10.5 : 10.5);
+      var weight = isWater ? '600 ' : '';
+      ctx.font = weight + size + 'px ' + FONT;
+
+      var text = L.n;
+      var tw = ctx.measureText(text).width;
+      var th = size + 3;
+      var px = view.x(L.x), py = view.y(L.y);
+
+      // 出了画布就不画（省得白算）
+      if (px < -60 || px > W + 60 || py < -40 || py > H + 40) { continue; }
+
+      var bx = px - tw / 2 - 2, by = py - th / 2;
+      if (hits(bx, by, tw + 4, th)) { continue; }   // 位置被占了，跳过
+      placed.push([bx, by, tw + 4, th]);
+
+      // 白描边让字在深色阴影上也读得清
+      ctx.strokeStyle = 'rgba(255,253,244,0.92)';
+      ctx.lineWidth = 3;
+      ctx.strokeText(text, px, py);
+      ctx.fillStyle = isWater ? 'rgba(38,96,128,0.95)'
+        : (isRoad ? 'rgba(96,88,70,0.9)' : 'rgba(58,62,72,0.9)');
+      ctx.fillText(text, px, py);
+    }
+    ctx.restore();
+  }
+
   /* ---------- 比例尺 ---------- */
   function drawScaleBar() {
     var ctx = state.ctx, dpr = state.dpr, view = state.view;
@@ -222,8 +352,6 @@ window.MAP = (function () {
     ctx.fillStyle = '#f7efd9';
     ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
 
-    drawShadows(payload.shadows);
-
     // 地面网格（每 100 m），给"工程感"
     var view = state.view, dpr = state.dpr, bbox = window.PROJ.bbox;
     ctx.save();
@@ -238,11 +366,22 @@ window.MAP = (function () {
     }
     ctx.restore();
 
+    // 水系和道路是"地面的一部分"，必须在阴影之前画 —— 否则影子盖不到路上，
+    // 看上去像路浮在阴影上面。
+    var base = payload.basemap;
+    if (base) {
+      drawWater(base.water);
+      drawRoads(base.roads);
+    }
+
+    drawShadows(payload.shadows);
     drawBuildings(payload.buildings || []);
     drawCampus(payload.campusRing);
     // 阴凉路线在下、最快路线在上，重叠时能看出区分
     drawRoute(payload.coolPts, '#38c172', 7, false);
     drawRoute(payload.fastPts, '#ff7a45', 7, true);
+    // 文字压在最上层，免得被路线和楼盖住
+    if (base && base.labels) { drawLabels(base.labels, view, ctx); }
     drawEndpoints(payload.fromXY, payload.toXY);
     drawScaleBar();
   }
