@@ -212,8 +212,9 @@
     line(drawnLabels > 0, '画布上确实画上了深色文字/线条（抽样像素检查）',
       drawnLabels + ' 个深色采样点');
 
-    line(BASE.water.length > 0, '水系数据：' + (BASE.water.length ? BASE.water.length + ' 处水面' : '暂无（OSM 抓取受阻，见 README）'),
-      BASE.water.map(function (w) { return w.n; }).join('、'));
+    line(BASE.water.length > 0,
+      '水系已画上：' + (BASE.water.length ? BASE.water.length + ' 处水面' : '暂无'),
+      BASE.water.map(function (w) { return w.n + (w.approx ? '（示意轮廓）' : '（测绘）'); }).join('、') || '无');
   }
 
   /* ---- 5. 打印摘要（这段可以直接念给老师听，或截图） ---- */

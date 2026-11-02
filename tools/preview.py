@@ -75,6 +75,10 @@ def main():
     ap.add_argument("--pair", type=int, default=0)
     ap.add_argument("--size", default="1400x900")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--grid", action="store_true",
+                    help="叠一层带编号的 200m 定位格子（用来跟人确认某个要素在哪）")
+    ap.add_argument("--mark", action="append", default=[], metavar="X,Y,标签[,半径]",
+                    help="在指定米坐标画一个带标签的圈（可重复，用来比选候选位置）")
     a = ap.parse_args()
 
     W, H = (int(x) for x in a.size.lower().split("x"))
@@ -115,6 +119,27 @@ def main():
     while gy <= y1:
         draw.line([(sx(x0), sy(gy)), (sx(x1), sy(gy))], fill=GRID, width=1)
         gy += 100
+
+    # ---- 1b. 定位网格（--grid：用来跟人对话确认"湖在哪个格子"）----
+    if a.grid:
+        CELL = 200.0
+        f_cell = pick_font(26, bold=True)
+        cols = int(math.ceil((x1 - x0) / CELL)) + 1
+        rows = int(math.ceil((y1 - y0) / CELL)) + 1
+        for ci in range(cols):
+            for ri in range(rows):
+                gx0, gy0 = x0 + ci * CELL, y0 + ri * CELL
+                if gx0 >= x1 or gy0 >= y1:
+                    continue
+                gx1, gy1 = min(gx0 + CELL, x1), min(gy0 + CELL, y1)
+                # 屏幕 y 向下，所以上边界是 sy(gy1)、下边界是 sy(gy0)
+                box = [sx(gx0), sy(gy1), sx(gx1), sy(gy0)]
+                draw.rectangle(box, outline=(40, 60, 90, 150), width=2)
+                label = "%s%d" % (chr(ord("A") + ci % 26), ri + 1)
+                px, py = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+                bbox = draw.textbbox((0, 0), label, font=f_cell)
+                draw.text((px - (bbox[2] - bbox[0]) / 2, py - (bbox[3] - bbox[1]) / 2),
+                          label, font=f_cell, fill=(30, 45, 70, 175))
 
     # ---- 2. 水系 ----
     for w in base.get("water") or []:
@@ -212,7 +237,24 @@ def main():
         if draw_label(L["n"], sx(L["x"]), sy(L["y"]), font, color):
             drawn += 1
 
-    # ---- 9. 起终点 + 比例尺 ----
+    # ---- 9. 起终点 + 候选标记 ----
+    for spec in a.mark:
+        parts = [p.strip() for p in spec.split(",")]
+        if len(parts) < 3:
+            continue
+        mx, my, label = float(parts[0]), float(parts[1]), parts[2]
+        rad = float(parts[3]) if len(parts) > 3 else 45.0
+        px, py = sx(mx), sy(my)
+        r = rad * scale
+        draw.ellipse([px - r, py - r, px + r, py + r],
+                     fill=(116, 172, 203, 120), outline=(30, 90, 130, 230), width=3)
+        f_mark = pick_font(20, bold=True)
+        bbox = draw.textbbox((0, 0), label, font=f_mark)
+        tx, ty = px - (bbox[2] - bbox[0]) / 2, py - (bbox[3] - bbox[1]) / 2
+        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2)):
+            draw.text((tx + dx, ty + dy), label, font=f_mark, fill=(255, 255, 255))
+        draw.text((tx, ty), label, font=f_mark, fill=(10, 40, 70))
+
     def marker(xy, color, txt):
         if not xy:
             return

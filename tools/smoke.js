@@ -335,6 +335,25 @@ for (var li = 0; BASE && li < BASE.labels.length - 1; li++) {
 ok('标注按重要度排好序（页面靠这个顺序防压字）', tierSorted && firstTier >= 10,
   '一级地名 ' + firstTier + ' 个');
 
+// 水系：园东湖是从路网环路反推的示意轮廓，不是 OSM 测绘数据，必须标 approx
+var lake = (BASE ? BASE.water : []).filter(function (w) { return w.n === '园东湖'; })[0];
+ok('园东湖已画上（从路网环路反推的示意轮廓）', !!lake,
+  BASE && (BASE.water.length + ' 处水面'));
+if (lake) {
+  var lr = lake.p, larea = 0;
+  for (var k = 0; k < lr.length - 1; k++) {
+    larea += lr[k][0] * lr[k + 1][1] - lr[k + 1][0] * lr[k][1];
+  }
+  larea = Math.abs(larea) / 2;
+  ok('湖面是多边形且面积像湖（5000–40000 m²）', lr.length >= 4 && larea > 5000 && larea < 40000,
+    Math.round(larea) + ' m² / ' + lr.length + ' 个顶点');
+  ok('湖被明确标记为示意轮廓（approx=true，页面画虚线边）', lake.approx === true,
+    'approx=' + lake.approx);
+  ok('湖的名字进了标注表（k=w），按湖泊样式排版', (BASE.labels || []).some(function (L) {
+    return L.n === '园东湖' && L.k === 'w';
+  }));
+}
+
 /* --- 2.8 静态约束（不改数据、不联网、语法可解析） --- */
 var jsFiles = ['js/core.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
 var syntaxBad = [];

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """凉径 ShadeRoute Lite —— 离线预计算工具（零第三方依赖）
 
@@ -1513,6 +1513,213 @@ def cmd_water(_args):
     print("\n再跑一次 python tools/build.py basemap 就会画到页面上。")
 
 
+def _road_graph_all():
+    """从 ways.json 建完整路网（不过滤人行道等级，这里要的是几何不是通行性）"""
+    path = os.path.join(RAW, "ways.json")
+    if not os.path.exists(path):
+        sys.exit("缺 data/raw/ways.json —— 先跑 python tools/build.py osm")
+    with open(path, encoding="utf-8") as f:
+        raw = json.load(f)
+    nodes_raw, ways = raw["nodes"], raw["ways"]
+    pos = {}
+    for nid, ll in nodes_raw.items():
+        pos[str(nid)] = to_xy(ll[0], ll[1])
+    adj = {}
+    for w in ways:
+        ns = [str(n) for n in w.get("nodes") or []]
+        for a, b in zip(ns, ns[1:]):
+            if a in pos and b in pos:
+                adj.setdefault(a, set()).add(b)
+                adj.setdefault(b, set()).add(a)
+    return pos, adj
+
+
+def _find_lake_candidates():
+    """在路网里找「被一圈路围住、里面几乎没有建筑」的闭合空块。
+
+    为什么这么做：湖泊在 OSM 里通常还有 natural=water 多边形，但那份数据这次
+    抓不到；而湖岸一定被园路围一圈、环内不会有建筑。于是用"基本环 + 环内建筑
+    占比"当特征反推，纯几何推理，不依赖任何在线数据。
+    """
+    pos, adj = _road_graph_all()
+    campus = _campus_ring()
+    bcent = []
+    for b in _load_buildings():
+        p = b.get("p") or []
+        if len(p) >= 3:
+            bcent.append((_poly_centroid(p), _ring_area(p)))
+
+    # 生成森林（图可能有多个连通分量），非树边各配一条树上路径 = 一个基本环
+    parent, depth, tree_edges = {}, {}, set()
+    order = []
+    for root in list(adj):
+        if root in parent:
+            continue
+        parent[root], depth[root] = None, 0
+        order.append(root)
+        qi = len(order) - 1
+        while qi < len(order):
+            u = order[qi]
+            qi += 1
+            for v in adj[u]:
+                if v not in parent:
+                    parent[v], depth[v] = u, depth[u] + 1
+                    tree_edges.add((min(u, v), max(u, v)))
+                    order.append(v)
+
+    def _tree_path(u, v, limit=240):
+        pu, pv = [u], [v]
+        a, b = u, v
+        while depth[a] > depth[b]:
+            a = parent[a]
+            pu.append(a)
+        while depth[b] > depth[a]:
+            b = parent[b]
+            pv.append(b)
+        while a != b:
+            a, b = parent[a], parent[b]
+            pu.append(a)
+            pv.append(b)
+        path = pu + pv[::-1][1:]
+        return path if len(path) <= limit else None
+
+    def _perim(ring):
+        n = len(ring)
+        return sum(math.hypot(ring[(i + 1) % n][0] - ring[i][0],
+                              ring[(i + 1) % n][1] - ring[i][1]) for i in range(n))
+
+    cands, seen = [], set()
+    for a in adj:
+        for b in adj[a]:
+            key = (min(a, b), max(a, b))
+            if key in tree_edges or key in seen:
+                continue
+            seen.add(key)
+            path = _tree_path(key[0], key[1])
+            if not path or len(path) < 3:
+                continue
+            ring = [pos[n] for n in path]
+            area = _ring_area(ring)
+            if not (4000.0 <= area <= 80000.0):
+                continue
+            perim = _perim(ring)
+            if not (380.0 <= perim <= 1500.0):
+                continue
+            cx, cy = _poly_centroid(ring)
+            if not _in_campus(cx, cy, campus):
+                continue
+            inside = sum(ar for (c, ar) in bcent if _point_in_ring(c[0], c[1], ring))
+            cands.append({"x": cx, "y": cy, "ring": ring, "area": area,
+                          "perim": perim, "b_ratio": inside / area, "n": len(ring)})
+
+    # 同一块地方会被多条非树边描述成相近的环，按中心点去重
+    cands.sort(key=lambda d: (d["b_ratio"], -d["area"]))
+    kept = []
+    for c in cands:
+        if all(math.hypot(c["x"] - k["x"], c["y"] - k["y"]) > 70 for k in kept):
+            kept.append(c)
+    return kept
+
+
+def cmd_lakering(args):
+    """不用 OSM 水面数据，从"一圈路围住的空块"反推湖岸，写进 water.json。
+
+    用法：
+        python tools/build.py lakering --list     # 列出候选
+        python tools/build.py lakering --pick 1   # 取第 1 个候选当园东湖
+        python tools/build.py basemap            # 再重跑 basemap 才画上去
+
+    多边形会向内收 6%（路中线到湖岸本来有个路宽），并标记 approx=true ——
+    页面上画成半透明 + 虚线边，明确是示意轮廓，不冒充测绘数据。
+    """
+    cands = _find_lake_candidates()
+    if not cands:
+        sys.exit("路网里没找到像湖的闭合空块")
+    print("候选闭合空块（环内建筑占比越低越像湖）：")
+    print("  #   中心x     中心y    面积m2   周长m  建筑占比  顶点")
+    for i, c in enumerate(cands[:12], 1):
+        print("  %-3d %7.0f %8.0f %9.0f %7.0f %7.1f%% %5d"
+              % (i, c["x"], c["y"], c["area"], c["perim"], c["b_ratio"] * 100, c["n"]))
+    if args.list:
+        return
+
+    pick = args.pick
+    if not (1 <= pick <= len(cands)):
+        sys.exit("--pick 只能是 1..%d" % len(cands))
+    c = cands[pick - 1]
+    cx, cy = c["x"], c["y"]
+
+    shrink = 1.0 - max(0.0, min(0.4, args.shrink))
+    ring = [[round(cx + (p[0] - cx) * shrink, 1), round(cy + (p[1] - cy) * shrink, 1)]
+            for p in c["ring"]]
+    ring.append(ring[0][:])
+
+    path = os.path.join(RAW, "water.json")
+    items = _load_optional_raw("water.json", []) or []
+    items = [it for it in items if (it.get("name") or "") != args.name]
+    items.append({"name": args.name, "ring": ring, "approx": True})
+    os.makedirs(RAW, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+
+    print("\n已写入 data/raw/water.json：%s" % args.name)
+    print("  中心 (%.0f, %.0f)  面积 %.0f m²  顶点 %d  内收 %.0f%%  示意轮廓"
+          % (cx, cy, _ring_area(ring), len(ring) - 1, (1 - shrink) * 100))
+    print("再跑一次 python tools/build.py basemap 就会画到页面上。")
+
+
+def cmd_waterblob(args):
+    """不用 OSM：按米坐标直接放一块"示意水面"。
+
+    为什么需要它：OSM 抓不到的时候，地图上少一块湖就是少一块湖。
+    校园里的湖形状是什么样，说到底是个人都能看出来的事，没必要卡在数据源上。
+    这里生成一个带轻微起伏的椭圆（不是正圆，避免看起来像贴了个圆片），
+    写进 data/raw/water.json 时标记 approx=true，
+    页面会画成半透明 + 虚线边，并在图例/文案里说明是示意轮廓。
+
+    用法：
+        python tools/build.py waterblob --x 300 --y 180
+        python tools/build.py waterblob --x 300 --y 180 --w 260 --h 160 --name 园东湖
+        python tools/build.py basemap        # 然后重跑 basemap 才会画上去
+    """
+    cx, cy = args.x, args.y
+    if cx is None or cy is None:
+        bx0, by0, bx1, by1 = bbox_m()
+        print("校园坐标范围（米，x 向东 / y 向北，原点=校园中心）：")
+        print("  x: %.0f .. %.0f     y: %.0f .. %.0f" % (bx0, bx1, by0, by1))
+        print("请用 --x / --y 指定水面中心，例如：")
+        print("  python tools/build.py waterblob --x 300 --y 180")
+        return
+
+    bx0, by0, bx1, by1 = bbox_m()
+    if not (bx0 <= cx <= bx1 and by0 <= cy <= by1):
+        sys.exit("这个点在校园范围外（x %.0f..%.0f / y %.0f..%.0f），换个位置试试"
+                 % (bx0, bx1, by0, by1))
+
+    # 48 个点画外轮廓：两个不同频率的正弦叠一点点起伏，看着像自然岸线
+    n = 48
+    rx, ry = args.w / 2.0, args.h / 2.0
+    ring = []
+    for i in range(n):
+        t = 2.0 * math.pi * i / n
+        wob = 1.0 + 0.06 * math.sin(3.0 * t + 0.7) + 0.04 * math.cos(5.0 * t - 1.1)
+        ring.append([round(cx + rx * wob * math.cos(t), 1),
+                     round(cy + ry * wob * math.sin(t), 1)])
+    ring.append(ring[0][:])
+
+    path = os.path.join(RAW, "water.json")
+    items = _load_optional_raw("water.json", []) or []
+    items = [it for it in items if (it.get("name") or "") != args.name]
+    items.append({"name": args.name, "ring": ring, "approx": True})
+    os.makedirs(RAW, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+    print("已写入 data/raw/water.json：%s @ (%.0f, %.0f)  %.0f×%.0f 米  示意轮廓"
+          % (args.name, cx, cy, args.w, args.h))
+    print("再跑一次 python tools/build.py basemap 就会画到页面上。")
+    print("位置不对就改 --x/--y 重跑，形状/大小不对就改 --w/--h。")
+
+
 def cmd_nodes(_args):
     adj, edges, nodes = _build_graph()
     print("度最高的 20 个路网节点（复制 lat,lon 到 tools/build.py 的 OD_PAIRS）：")
@@ -1543,6 +1750,17 @@ def main():
     imp = sub.add_parser("import", help="离线兜底：从手动导出的 Overpass JSON 落盘")
     imp.add_argument("files", nargs=2, metavar=("BUILDINGS_JSON", "WAYS_JSON"),
                      help="Overpass 原始 JSON 响应文件")
+    wb = sub.add_parser("waterblob", help="不用 OSM：按坐标放一块示意水面")
+    wb.add_argument("--x", type=float, default=None, help="水面中心 x（米，向东为正）")
+    wb.add_argument("--y", type=float, default=None, help="水面中心 y（米，向北为正）")
+    wb.add_argument("--w", type=float, default=240.0, help="东西宽度（米），默认 240")
+    wb.add_argument("--h", type=float, default=150.0, help="南北高度（米），默认 150")
+    wb.add_argument("--name", default="园东湖", help="水面名称，默认 园东湖")
+    lr = sub.add_parser("lakering", help="不用 OSM：从路网环路反推湖岸")
+    lr.add_argument("--pick", type=int, default=1, help="取第几个候选，默认 1")
+    lr.add_argument("--list", action="store_true", help="只列出候选不写入")
+    lr.add_argument("--shrink", type=float, default=0.06, help="向内收的比例，默认 0.06")
+    lr.add_argument("--name", default="园东湖", help="水面名称，默认 园东湖")
     args = ap.parse_args()
     cmd = args.cmd or "check"
     if cmd == "all":
@@ -1553,7 +1771,7 @@ def main():
         return
     {"check": cmd_check, "sample": cmd_sample, "fetch": cmd_fetch,
      "shadows": cmd_shadows, "routes": cmd_routes, "nodes": cmd_nodes,
-     "basemap": cmd_basemap, "water": cmd_water,
+     "basemap": cmd_basemap, "water": cmd_water, "waterblob": cmd_waterblob, "lakering": cmd_lakering,
      "osm": cmd_osm, "import": lambda a: cmd_import(a.files)}[cmd](args)
 
 
