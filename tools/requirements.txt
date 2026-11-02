@@ -1,0 +1,24 @@
+# 凉径 ShadeRoute Lite 预计算工具：无需任何第三方依赖
+#
+# tools/build.py 只用 Python 标准库（urllib / json / heapq / math / datetime），
+# Python 3.8+ 直接运行，不需要 pip install，也不需要几何库那种 C 扩展。
+# （用户机器是 Python 3.14，几何库不一定有 wheel，所以特意做成零依赖。）
+#
+# 用法：
+#   python tools/build.py check      # 只诊断 Overpass 能不能连上（不动数据）
+#   python tools/build.py sample     # 生成假数据（完全离线，用来验证页面）
+#   python tools/build.py osm        # 直接走 OSM 主 API 拉建筑+路网（当前最可靠）
+#   python tools/build.py fetch      # Overpass 优先，失败自动转 OSM 主 API
+#   python tools/build.py import a.json b.json   # 手动导出的 Overpass JSON 兜底
+#   python tools/build.py shadows    # 预计算 31 帧阴影
+#   python tools/build.py routes     # 预计算两对起终点的双路线
+#   python tools/build.py nodes      # 列出候选路网节点
+#   python tools/build.py all        # fetch + shadows + routes
+#
+# 关于「只算校园内」：
+#   build.py 会从 OSM 找带 amenity=university 的「中山大学」多边形（way 300917756），
+#   存成 data/raw/campus.json，然后按它裁切建筑（质心在界内）和道路（中点在界内）。
+#   原始 bbox 数据仍完整保存在 data/raw/ 供回溯。不想裁切就把 CAMPUS_ONLY 改成 False。
+#   注意：data/buildings.js 只含校园内建筑——否则界面上会出现校外商场，和路线自相矛盾。
+#
+# 本文件保留只是为了兼容老的安装说明：没有包需要装。

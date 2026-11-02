@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>凉径 · ShadeRoute —— 多走 44 米，少晒 4.0 分钟</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- 左栏：信息与控制 -->
+  <aside id="panel">
+    <header>
+      <h1>凉径 <span class="sub">ShadeRoute</span></h1>
+      <p class="slogan">多走 44 米，少晒 4.0 分钟</p>
+      <p class="place" id="place">中山大学 · 广州南校园</p>
+    </header>
+
+    <!-- 时间滑块 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>时间</h2>
+        <output id="time-label">14:00</output>
+      </div>
+      <input type="range" id="time-slider" min="0" max="0" value="0" step="1">
+      <div class="sun-line">
+        <span>太阳高度角 <b id="sun-elev">--</b>°</span>
+        <span>方位 <b id="sun-az">--</b>°</span>
+      </div>
+      <p class="hint" id="sun-hint"></p>
+    </section>
+
+    <!-- 起终点 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>起点 → 终点</h2>
+      </div>
+      <div class="pickers">
+        <label class="picker">
+          <span class="pk-tag pk-from">起</span>
+          <select id="start-select"></select>
+        </label>
+        <label class="picker">
+          <span class="pk-tag pk-to">终</span>
+          <select id="end-select"></select>
+        </label>
+      </div>
+      <p class="hint" id="pick-hint">也可以直接在地图上点两下：第一下设为起点，第二下设为终点。</p>
+    </section>
+
+    <!-- 路线对比 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>路线对比</h2>
+        <output id="route-tag">实时计算</output>
+      </div>
+
+      <div class="route-card" id="card-fast">
+        <div class="rc-title"><span class="dot dot-fast"></span>最快路线</div>
+        <div class="rc-nums">
+          <div><b id="fast-min">--</b><span>分钟</span></div>
+          <div class="rc-sun"><b id="fast-sun">--</b><span>分钟暴晒</span></div>
+        </div>
+        <div class="rc-shade">阴影覆盖 <b id="fast-shade">--</b>　全长 <b id="fast-len">--</b> 米</div>
+      </div>
+
+      <div class="route-card" id="card-cool">
+        <div class="rc-title"><span class="dot dot-cool"></span>阴凉路线</div>
+        <div class="rc-nums">
+          <div><b id="cool-min">--</b><span>分钟</span></div>
+          <div class="rc-sun"><b id="cool-sun">--</b><span>分钟暴晒</span></div>
+        </div>
+        <div class="rc-shade">阴影覆盖 <b id="cool-shade">--</b>　全长 <b id="cool-len">--</b> 米</div>
+      </div>
+
+      <p class="delta" id="delta">--</p>
+    </section>
+
+    <!-- 数据说明 -->
+    <section class="block">
+      <h2>数据说明</h2>
+      <ul class="notes" id="notes"></ul>
+    </section>
+
+    <footer>
+      <p>演示日期：<b id="demo-date">--</b></p>
+      <p id="data-flag" class="warn"></p>
+    </footer>
+  </aside>
+
+  <!-- 右栏：地图 -->
+  <main id="map-wrap">
+    <canvas id="map"></canvas>
+    <div id="legend">
+      <span><i class="lg lg-sun"></i>阳光</span>
+      <span><i class="lg lg-shade"></i>阴影</span>
+      <span><i class="lg lg-fast"></i>最快</span>
+      <span><i class="lg lg-cool"></i>阴凉</span>
+    </div>
+    <div id="compass">N</div>
+  </main>
+
+</div>
+
+<!-- 数据（.js 而非 .json：file:// 双击也能加载） -->
+<script src="data/meta.js"></script>
+<script src="data/buildings.js"></script>
+<script src="data/shadows.js"></script>
+<script src="data/routes.js"></script>
+<script src="data/graph.js"></script>
+
+<script src="content/strings.js"></script>
+<script src="js/core.js"></script>
+<script src="js/proj.js"></script>
+<script src="js/router.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
