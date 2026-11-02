@@ -1,4 +1,4 @@
-## 10. 项目约定（lead 维护）
+﻿## 10. 项目约定（lead 维护）
 
 - **项目**：凉径 · ShadeRoute Lite —— 中山大学广州校区南校园「热浪天走哪条路」决策工具
 - **范围**：OSM 官方校园多边形 `way 300917756`「中山大学(广州校区南校园)」，**1,201,723 m² / 114 顶点**；拉取 bbox `(S,W,N,E) = (23.0932, 113.2837, 23.1059, 113.3013)`（校园外接矩形 + ~55 m 余量）；校区内 **285 栋建筑 / 613 条道路边 / 474 个节点 / 143 个独立回路**
@@ -14,20 +14,21 @@
 ## 11. 目录与文件（唯一权威）
 
 ```
-shaderoute/                                  # 代码合计 3849 行（前端 1195 / 工具 2094 / 页面 560）
-├── index.html              # 页面骨架（121 行，含起终点下拉 + 地图点选）
-├── styles.css              # 样式（423 行）
+shaderoute/                                  # 代码合计 4781 行（前端 1375 / 工具链 2842 / 页面 564）
+├── index.html              # 页面骨架（122 行，含起终点下拉 + 地图点选）
+├── styles.css              # 样式（426 行）
 ├── content/strings.js      # 全部文案与免责说明，含 OSM 署名（16 行）
-├── js/                     # 前端逻辑合计 1195 行
-│   ├── proj.js             # 经纬度 ↔ 屏幕坐标（40 行）
-│   ├── core.js             # 纯函数：shadeMeters / routeSummary / WALK_SPEED（273 行）
-│   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（219 行 / 7.9 KB）
-│   ├── map.js              # Canvas：底图、阴影、路线（249 行）
-│   └── app.js              # 交互：时间滑块、起终点下拉、地图点选、卡片（414 行）
+├── js/                     # 前端逻辑合计 1375 行
+│   ├── proj.js             # 经纬度 ↔ 屏幕坐标（43 行）
+│   ├── core.js             # 纯函数：shadeMeters / routeSummary / WALK_SPEED（284 行）
+│   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（227 行 / 7.9 KB）
+│   ├── map.js              # Canvas 9 层：地面+网格 / 水系 / 道路 / 阴影 / 建筑 / 边界 / 路线 / 标注 / 标记（394 行）
+│   └── app.js              # 交互：时间滑块、起终点下拉、地图点选、卡片（427 行）
 ├── data/
 │   ├── meta.js             # date / 31 帧 / frames[].sun / bbox_m / campus{name,area_m2,ring}
 │   ├── buildings.js        # 285 栋：{id, name, p, h, src}
 │   ├── graph.js            # 101.2 KB：474 节点 / 613 边（毫米精度）/ 31 帧暴晒千分比 / 53 地名
+│   ├── basemap.js          # 31.5 KB 底图：{roads:[{t,p}], water:[{n,p,approx}], labels:[{n,x,y,k,r,a}]}
 │   ├── shadows.js          # 31 帧 × 285 环（861.6 KB）
 │   ├── routes.js           # 31 帧 × 2 pairs：[{fastest:{minutes,sun_minutes,length_m}, cool:{...}}]
 │   ├── height-report.csv   # 60 行 6 列
@@ -35,10 +36,11 @@ shaderoute/                                  # 代码合计 3849 行（前端 11
 │       ├── campus.json     # {name, area_m2, ring[[x,y],...114]}
 │       ├── buildings.json  # 555 栋（bbox 原始，含校外）
 │       └── ways.json       # 297 条 way（bbox 原始）
-└── tools/                  # 工具链合计 2094 行（比前端还长，重点在数据）
-    ├── build.py            # 零依赖管线（1151 行）：sample/osm/fetch/import/shadows/routes/check/all
-    ├── smoke.js            # 90 条断言（731 行）
-    └── console-check.js    # 浏览器控制台手动核对脚本（212 行）
+└── tools/                  # 工具链合计 2842 行（比前端还长，重点在数据）
+    ├── build.py            # 零依赖管线（1560 行）：sample/osm/fetch/import/shadows/routes/check/all/basemap/water
+    ├── smoke.js            # 97 条断言（793 行）
+    ├── console-check.js    # 浏览器控制台手动核对脚本（246 行，含底图 4.5 节）
+    └── preview.py          # 无浏览器 PNG 预览（243 行）：按 map.js 图层重画，沙箱自查用
 ```
 
 ## 12. 数据获取三级方案
@@ -47,13 +49,15 @@ shaderoute/                                  # 代码合计 3849 行（前端 11
 2. **兜底 A**：`python tools\build.py fetch` —— Overpass 优先，任一镜像失败自动降级到 OSM 主 API。
 3. **兜底 B**：`python tools\build.py import buildings.json ways.json` —— 用浏览器导出的 Overpass JSON 落盘。
 4. **诊断**：`python tools\build.py check` —— **只测 Overpass** 连通性，不拉数据；用于判断"是 Overpass 挂了还是网挂了"。
+5. **底图**：`python tools\build.py basemap` —— **纯离线**，从 `data/raw/ways.json` 生成 `data/basemap.js`（**296 段道路** / **60 条楼名** / 水系 **0 处**）。
+6. **水系 / 路名（需网络）**：`python tools\build.py water` —— 把 `natural=water` 存成 `data/raw/water.json`、道路 `name` 存成 `data/raw/roadnames.json`，抓完**重跑一次 `basemap`** 才上图；当前 OSM 抓取受阻，页面不画湖、不写路名（**有意降级，不是 bug**）。
 
 > Overpass 的 POST 在本机网络下会被 TLS 中断（`SSL: UNEXPECTED_EOF_WHILE_READING`），所以主路径是主 API，不要反过来。
 
 ## 13. 测试方式
 
-- `node tools/smoke.js` → **90 条断言全过**（退出码 0）。
-- 断言覆盖：数据契约（date=2026-11-02、31 帧、285 环、`src` 分布 21/264、14:00 数值、height-report 61 行 6 列）+ 前端纯函数（`shadeMeters`、`routeSummary` 文案精度）+ **6 条校园边界回归**（建筑质心在校内、路线采样点在校内、每帧阴影环与校园有交集、14:00 两条路线最大偏离 ≤120 m、校园名含"中山大学/南校园"、面积在 1.0~1.4 km²）+ **17 条算路断言**（62 个「帧 × 起终点」对拍：长度**全等、差 0 米**、暴晒差 ≤0.05 分钟；同点提示、任意两地名可算、往返对称、5 km 外拒绝、中心点吸附、4 条地图点选）。
+- `node tools/smoke.js` → **97 条断言全过**（退出码 0）。
+- 断言覆盖：数据契约（date=2026-11-02、31 帧、285 环、`src` 分布 21/264、14:00 数值、height-report 61 行 6 列）+ 前端纯函数（`shadeMeters`、`routeSummary` 文案精度）+ **7 条底图断言**（`data/basemap.js` 结构完整、道路全部来自本地 OSM 路网（297 条 way 裁成 296 段）、四档线型齐全、所有道路坐标在 bbox±60 m 内、楼名标注全部在校园 bbox 内、标注数 ≥60、按重要度排序）+ **6 条校园边界回归**（建筑质心在校内、路线采样点在校内、每帧阴影环与校园有交集、14:00 两条路线最大偏离 ≤120 m、校园名含"中山大学/南校园"、面积在 1.0~1.4 km²）+ **17 条算路断言**（62 个「帧 × 起终点」对拍：长度**全等、差 0 米**、暴晒差 ≤0.05 分钟；同点提示、任意两地名可算、往返对称、5 km 外拒绝、中心点吸附、4 条地图点选）。
 - 手动冒烟：双击 `index.html` → 拖滑块 07:00–17:00 → 两组起终点 → **下拉换两个地名 / 地图点两下** → 断网刷新。
 - 14:00 卡片必须显示「多走 44 米，少晒 4.0 分钟。」（多一个空格都算错）。
 
@@ -63,6 +67,7 @@ shaderoute/                                  # 代码合计 3849 行（前端 11
 - 卡片大数字（用时 / 暴晒）是**四舍五入到整数分钟**：14.8 → 15 分钟。
 - 阴影覆盖用**百分比整数**：6% → 35%；精确值（5.7% / 35.2%）只在被追问时给。
 - 低置信度帧固定 5 个：07:00 / 07:20 / 07:40 / 16:40 / 17:00。
+- **底图口径**：道路 **296 段**（原始 297 条 way 裁切后，**296 段 ≠ 297 条**）、楼名 **60 条**（68 栋有名建筑过滤编号型垃圾名后，1400×900 实画 50 个）、水系 **0 处**；图层说法统一为"**9 层**"。**不得写"湖已加载""园东湖"**，统一写"水系与路名待 OSM 数据补齐（`python tools\build.py water`），当前版本不绘制"。
 - **作废的旧说法**（任何文档/PPT 里都不该再出现，除了明确标"作废"的对照表）：旧矩形 bbox 的栋数/道路数/回路数、旧 slogan（见 README §9）、旧终点名（见 README §9）、旧版夏至/11 月对比的百分比、`height` 有标签的假象数字。
 
 ## 15. 关键接口契约（js ↔ data）
@@ -96,6 +101,14 @@ window.DATA_GRAPH = {
   exposed: [[0-1000, ...], ...],// 31 帧 × 613 条，暴晒千分比（整数）
   anchors: [{ name, x, y, node }], // 53 个校园地名（下拉 + 默认起终点）
   coolFactor: 6.0, walkSpeed: 1.25
+};
+
+// data/basemap.js（底图：只用于绘制，不参与算路；与 graph 同源 ways.json）
+window.DATA_BASEMAP = {
+  roads: [{ t, p: [[x, y], ...] }],          // 296 段；t ∈ "main" | "local" | "service" | "path"
+  water: [{ n, p: [[x, y], ...], approx }],  // 当前 0 处（待 build.py water）
+  labels: [{ n, x, y, k, r, a }],            // 60 条；k="b" 建筑名，r=重要度档，a=底面积
+  roadCount: 296, sourceWays: 297, waterCount: 0, approxWater: 0
 };
 
 // js/router.js（浏览器端，无依赖、file:// 可用）
@@ -137,8 +150,9 @@ window.ROUTER = {
 ## 18. 当前状态（交付前更新这一行）
 
 - 数据：已换成**校园多边形**版本（1.20 km² / 285 栋 / 613 边 / 143 回路），`CAMPUS_ONLY = True`，`date = 2026-11-02`，31 帧。
-- 功能：**任意两点现场算路**（53 个校园地名 + 地图点选，`data/graph.js` 101.2 KB + `js/router.js` 219 行），与预计算 62 组合对拍长度全等。
-- 测试：`node tools/smoke.js` **90 条全过**。
-- 数据体积：页面加载约 **1.05 MB（1072 KB）**，阴影 861.6 KB 是大头。
+- 功能：**任意两点现场算路**（53 个校园地名 + 地图点选，`data/graph.js` 101.2 KB + `js/router.js` 227 行），与预计算 62 组合对拍长度全等。
+- 底图：`data/basemap.js`（31.5 KB）已上线——**296 段道路**（四档线型）+ **60 条楼名** + 图例「道路」，地图 **9 层**渲染；**水系 0 处、道路不写名字**（OSM 抓取受阻，待 `build.py water`，属有意降级）。
+- 测试：`node tools/smoke.js` **97 条全过**（含 7 条底图断言）。
+- 数据体积：页面加载约 **1.08 MB（1103.6 KB）**，阴影 861.6 KB 是大头。
 - 文档：README + 6 份 docs 已同步到新口径（"多走 44 米，少晒 4.0 分钟"）；另有 lead 维护的 `docs/EXAMPLE-QUERIES.md` 实测表。
 - 待补：页面截图（14:00 / 12:00 / 16:40 / 07:00 / 任意两点）、11-02 实拍、3 分钟 MP4、Network 0 请求截图。

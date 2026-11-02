@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """凉径 ShadeRoute Lite —— 离线预计算工具（零第三方依赖）
 
@@ -1372,68 +1372,38 @@ def cmd_basemap(_args):
           % (len(roads), len(water), len(labels)))
 
 
-def cmd_water(_args):
-    """抓水系与路名（需要网络；抓不到就保持现状，不影响页面运行）。
-
-    为什么单独一条命令：这两个要素对"地图像不像地图"影响很大，但对算路没有影响。
-    校园里常见的湖（园东湖）在 OSM 里是 natural=water 的闭合 way/relation，
-    路名在 highway way 的 name tag 上。抓下来存成 data/raw/，
-    再跑一次 basemap 就会出现在页面上。
-    """
-    bbox = "%s,%s,%s,%s" % (BBOX[0], BBOX[1], BBOX[2], BBOX[3])
-    print("[1/2] 抓水系（natural=water / waterway / landuse=reservoir）...")
-    q1 = ('[out:json][timeout:120];('
-          'way["natural"="water"](%s);'
-          'relation["natural"="water"](%s);'
-          'way["waterway"](%s);'
-          'way["landuse"="reservoir"](%s);'
-          ');out tags geom;' % (bbox, bbox, bbox, bbox))
-    try:
-        elems = _overpass(q1, "水系")
-    except SystemExit:
-        print("      抓不到水系（网络不通）。页面照常运行，只是不画湖。")
-        return
-
-    water, unnamed = [], 0
+def _water_from_elements(elems):
+    """把 Overpass 元素列表转成 water.json 的格式（闭合水面才要）"""
+    water, unnamed, open_ring = [], 0, 0
     for el in elems:
         tags = el.get("tags") or {}
-        name = tags.get("name") or ""
+        name = (tags.get("name") or "").strip()
         geom = el.get("geometry")
         if not geom:
-            # relation 只取闭合的成员 way，够画绝大多数湖
-            continue
+            continue        # relation 成员几何较复杂，先只取 way
         ring = []
         for g in geom:
             if g.get("lat") is None:
                 continue
-            ring.append([round(to_xy(g["lat"], g["lon"])[0], 1),
-                         round(to_xy(g["lat"], g["lon"])[1], 1)])
+            x, y = to_xy(g["lat"], g["lon"])
+            ring.append([round(x, 1), round(y, 1)])
         if len(ring) < 4:
             continue
-        if el.get("type") == "way" and (ring[0] != ring[-1]):
-            continue    # 不闭合的当河道，先跳过（画法不同）
+        if el.get("type") == "way" and ring[0] != ring[-1]:
+            open_ring += 1      # 不闭合的是河道，画法不同，本版跳过
+            continue
         if not name:
             unnamed += 1
             continue
         water.append({"name": name, "ring": ring, "approx": False,
                       "kind": tags.get("natural") or tags.get("waterway") or "water"})
+    return water, unnamed, open_ring
 
-    print("      得到 %d 处有名字的水面（跳过 %d 处无名水面）" % (len(water), unnamed))
-    if water:
-        with open(os.path.join(RAW, "water.json"), "w", encoding="utf-8") as f:
-            json.dump(water, f, ensure_ascii=False, indent=1)
-        print("      -> data/raw/water.json：%s" % "、".join(w["name"] for w in water[:6]))
 
-    print("[2/2] 抓路名（highway 的 name tag）...")
-    q2 = '[out:json][timeout:120];way["highway"]["name"](%s);out tags geom;' % bbox
-    try:
-        elems2 = _overpass(q2, "路名")
-    except SystemExit:
-        print("      抓不到路名（网络不通）。页面照旧，只是路上不写字。")
-        return
-
-    best = {}   # 同名道路取最长的那一条来放字
-    for el in elems2:
+def _roadnames_from_elements(elems):
+    """同名道路只留最长的一条，并算出"放字点"与文字角度"""
+    best = {}
+    for el in elems:
         tags = el.get("tags") or {}
         name = (tags.get("name") or "").strip()
         geom = el.get("geometry") or []
@@ -1442,7 +1412,7 @@ def cmd_water(_args):
         pts = [to_xy(g["lat"], g["lon"]) for g in geom if g.get("lat") is not None]
         if len(pts) < 2:
             continue
-        # 取最长的那一段作为放字的位置（字要放在路比较长、比较直的地方）
+        # 取最长的那一段作为放字位置（字要放在路比较长、比较直的地方）
         best_i, best_len = 0, -1.0
         for i in range(len(pts) - 1):
             L = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
@@ -1462,15 +1432,84 @@ def cmd_water(_args):
                           "angle": round(ang, 1), "len": total,
                           "rank": 1 if (tags.get("highway") in
                                         ("trunk", "primary", "secondary", "tertiary")) else 2}
-
     names = sorted(best.values(), key=lambda d: -d["len"])
     for item in names:
         item.pop("len", None)
+    return names
+
+
+def cmd_water(_args):
+    """补齐水系与路名：优先读本机文件，读不到再联网抓。
+
+    为什么单独一条命令：这两个要素对"地图像不像地图"影响很大，但对算路没有影响。
+    校园里的湖（园东湖）在 OSM 里是 natural=water 的闭合 way，
+    路名在 highway way 的 name tag 上。存成 data/raw/ 之后再跑 basemap 就出现。
+
+    离线兜底（本机网络抓不到 OSM 时用）：
+      1. 浏览器直接打开下面两条 URL，把返回的 JSON 另存为
+           data/raw/water_overpass.json
+           data/raw/roadnames_overpass.json
+      2. 再执行 python tools/build.py water
+    这样完全不需要网络出现在 Python 里 —— 浏览器的网络环境通常比命令行好。
+    """
+    bbox = "%s,%s,%s,%s" % (BBOX[0], BBOX[1], BBOX[2], BBOX[3])
+    q1 = ('[out:json][timeout:120];('
+          'way["natural"="water"](%s);'
+          'relation["natural"="water"](%s);'
+          'way["waterway"](%s);'
+          'way["landuse"="reservoir"](%s);'
+          ');out tags geom;' % (bbox, bbox, bbox, bbox))
+    q2 = '[out:json][timeout:120];way["highway"]["name"](%s);out tags geom;' % bbox
+
+    # ---- 水系 ----
+    print("[1/2] 水系 ...")
+    local = _load_optional_raw("water_overpass.json", None)
+    if local is not None:
+        elems = local.get("elements") if isinstance(local, dict) else local
+        print("      读取本机 data/raw/water_overpass.json（%d 个元素）" % len(elems or []))
+    else:
+        try:
+            elems = _overpass(q1, "水系")
+        except SystemExit:
+            print("      抓不到水系。离线办法：浏览器打开下面这条 URL，")
+            print("      把返回的 JSON 存成 data/raw/water_overpass.json 后重跑本命令：")
+            print("      " + OVERPASS_MIRRORS[0] + "?data=" + urllib.parse.quote(q1))
+            elems = []
+
+    water, unnamed, open_ring = _water_from_elements(elems or [])
+    print("      得到 %d 处有名字的水面（无名 %d 处，未闭合 %d 处）"
+          % (len(water), unnamed, open_ring))
+    if water:
+        with open(os.path.join(RAW, "water.json"), "w", encoding="utf-8") as f:
+            json.dump(water, f, ensure_ascii=False, indent=1)
+        print("      -> data/raw/water.json：%s" % "、".join(w["name"] for w in water[:8]))
+    else:
+        print("      没拿到水面数据（页面将不画湖，属降级状态）")
+
+    # ---- 路名 ----
+    print("[2/2] 路名 ...")
+    local2 = _load_optional_raw("roadnames_overpass.json", None)
+    if local2 is not None:
+        elems2 = local2.get("elements") if isinstance(local2, dict) else local2
+        print("      读取本机 data/raw/roadnames_overpass.json（%d 个元素）" % len(elems2 or []))
+    else:
+        try:
+            elems2 = _overpass(q2, "路名")
+        except SystemExit:
+            print("      抓不到路名。离线办法：浏览器打开下面这条 URL，")
+            print("      把返回的 JSON 存成 data/raw/roadnames_overpass.json 后重跑本命令：")
+            print("      " + OVERPASS_MIRRORS[0] + "?data=" + urllib.parse.quote(q2))
+            elems2 = []
+
+    names = _roadnames_from_elements(elems2 or [])
     if names:
         with open(os.path.join(RAW, "roadnames.json"), "w", encoding="utf-8") as f:
             json.dump(names, f, ensure_ascii=False, indent=1)
         print("      -> data/raw/roadnames.json：%d 条路名（%s…）"
               % (len(names), "、".join(n["name"] for n in names[:6])))
+    else:
+        print("      没拿到路名数据（路上将不写字，属降级状态）")
+
     print("\n再跑一次 python tools/build.py basemap 就会画到页面上。")
 
 
