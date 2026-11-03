@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>凉径 · ShadeRoute Lite —— 多走 44 米，少晒 4.0 分钟</title>
+<link rel="stylesheet" href="styles.css">
+<!-- ↓ 绿色收益面板样式：新增文件，只写 .gn-* 新名字，不覆盖原有规则 -->
+<link rel="stylesheet" href="styles-green.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- 左栏：信息与控制 -->
+  <aside id="panel">
+    <header>
+      <h1>凉径 <span class="sub">ShadeRoute Lite</span></h1>
+      <p class="slogan">多走 44 米，少晒 4.0 分钟</p>
+      <p class="place" id="place">中山大学 · 广州南校园</p>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="面板切换">
+      <button type="button" class="tab is-on" id="tab-route" role="tab" aria-selected="true">路线对比</button>
+      <button type="button" class="tab" id="tab-plan" role="tab" aria-selected="false">种树规划<em>新</em></button>
+    </nav>
+
+    <!-- 时间滑块 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>时间</h2>
+        <output id="time-label">14:00</output>
+      </div>
+      <input type="range" id="time-slider" min="0" max="0" value="0" step="1">
+      <div class="sun-line">
+        <span>太阳高度角 <b id="sun-elev">--</b>°</span>
+        <span>方位 <b id="sun-az">--</b>°</span>
+      </div>
+      <p class="hint" id="sun-hint"></p>
+    </section>
+
+    <div id="pane-route">
+
+    <!-- 起终点 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>起点 → 终点</h2>
+      </div>
+      <div class="pickers">
+        <label class="picker">
+          <span class="pk-tag pk-from">起</span>
+          <select id="start-select"></select>
+        </label>
+        <label class="picker">
+          <span class="pk-tag pk-to">终</span>
+          <select id="end-select"></select>
+        </label>
+      </div>
+      <p class="hint" id="pick-hint">也可以直接在地图上点两下：第一下设为起点，第二下设为终点。</p>
+    </section>
+
+    <!-- 路线对比 -->
+    <section class="block">
+      <div class="block-head">
+        <h2>路线对比</h2>
+        <div class="pair-switch" role="group" aria-label="切换示例起终点">
+          <button type="button" class="pair-btn is-on" id="pair-a" data-pair="0" aria-pressed="true">示例 A</button>
+          <button type="button" class="pair-btn" id="pair-b" data-pair="1" aria-pressed="false">示例 B</button>
+        </div>
+        <output id="route-tag">预计算</output>
+      </div>
+
+      <div class="route-card" id="card-fast">
+        <div class="rc-title"><span class="dot dot-fast"></span>最快路线</div>
+        <div class="rc-nums">
+          <div><b id="fast-min">--</b><span>分钟</span></div>
+          <div class="rc-sun"><b id="fast-sun">--</b><span>分钟暴晒</span></div>
+        </div>
+        <div class="rc-shade">阴影覆盖 <b id="fast-shade">--</b>　全长 <b id="fast-len">--</b> 米</div>
+      </div>
+
+      <div class="route-card" id="card-cool">
+        <div class="rc-title"><span class="dot dot-cool"></span>阴凉路线</div>
+        <div class="rc-nums">
+          <div><b id="cool-min">--</b><span>分钟</span></div>
+          <div class="rc-sun"><b id="cool-sun">--</b><span>分钟暴晒</span></div>
+        </div>
+        <div class="rc-shade">阴影覆盖 <b id="cool-shade">--</b>　全长 <b id="cool-len">--</b> 米</div>
+      </div>
+
+      <p class="delta" id="delta" role="status" aria-live="polite">--</p>
+    </section>
+
+    </div><!-- /#pane-route -->
+
+    <!-- 治理侧：种树规划（沙箱） -->
+    <div id="pane-plan" hidden>
+
+      <section class="block">
+        <div class="block-head">
+          <h2>种树规划（沙箱）</h2>
+          <output id="plan-count">0 棵</output>
+        </div>
+        <p class="hint">点空地种树，拖动微调，右键删除。含树指标只用于规划演算，<b>不进</b>官方「阴凉 %」（官方数字仍只算建筑阴影）。</p>
+
+        <div class="plan-metrics">
+          <div class="pm"><b id="plan-area">0</b><span>m² 树荫面积（当前帧）</span></div>
+          <div class="pm"><b id="plan-ratio">--</b><span>% 路网阴凉（含树）</span></div>
+          <div class="pm"><b id="plan-minutes">0.0</b><span>分钟 阴凉路段（当前帧）</span></div>
+        </div>
+
+        <div class="plan-cost">
+          <span>已投入 <b id="plan-cost">0</b> 元 · <b id="plan-wan">0.0</b> 万元</span>
+          <span id="plan-baseline">--</span>
+        </div>
+
+        <div class="plan-count-row">
+          <label for="plan-count-input">优化棵数</label>
+          <input type="number" id="plan-count-input" min="1" max="600" step="1" value="20" inputmode="numeric" aria-describedby="plan-count-hint">
+          <span>棵</span>
+          <span class="hint" id="plan-count-hint">1–600，默认 20 棵；30 m 间距下最多落 584 棵</span>
+        </div>
+
+        <div class="plan-actions">
+          <button type="button" class="act act-primary" id="plan-optimize">优化：选 20 个点位</button>
+          <button type="button" class="act" id="plan-plant-all" disabled>一键全种下</button>
+          <button type="button" class="act" id="plan-undo" disabled>撤销</button>
+          <button type="button" class="act" id="plan-clear" disabled>清空</button>
+        </div>
+
+        <div class="plan-progress" id="plan-progress" hidden>
+          <i id="plan-progress-bar"></i><span id="plan-progress-text">0 / 20</span>
+        </div>
+        <p class="delta" id="plan-msg" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="block" id="plan-rank-block" hidden>
+        <div class="block-head">
+          <h2>性价比排名</h2>
+          <output id="plan-rank-sum">--</output>
+        </div>
+        <ol class="plan-rank" id="plan-rank"></ol>
+        <p class="hint" id="plan-rank-note"></p>
+      </section>
+
+      <section class="block">
+        <h2>口径</h2>
+        <ul class="notes">
+          <li>单价 ¥3,000/株（含 3 年养护）为<b>假设值</b>，默认 20 株 = 6 万元（棵数可在按钮上方改，1–600；成本随棵数线性变）；改 <code>js/plan.js</code> 的 <code>COST_PER_TREE</code> 即可。</li>
+          <li>树影 = 树冠圆（半径 4 m）沿太阳反方向平移 L = h / tan(高度角)，与建筑阴影同一套几何、同一帧。</li>
+          <li>面积按 5 m 网格统计；路网占比按边长加权（每米等权），用的是算路那同一份 613 条边。</li>
+          <li>优化 = 贪心边际增益（覆盖函数子模，1−1/e 保证）+ 两两 ≥ 30 m 分散约束；棵数只决定贪心跑几轮，<b>评分口径不变</b>。</li>
+        </ul>
+      </section>
+
+    </div><!-- /#pane-plan -->
+
+    <!-- 数据说明 -->
+    <section class="block">
+      <h2>数据说明</h2>
+      <ul class="notes" id="notes"></ul>
+    </section>
+
+    <footer>
+      <p>演示日期：<b id="demo-date">--</b></p>
+      <p id="data-flag" class="warn"></p>
+      <p class="disclaimer">演示用途，不构成出行建议；阴影未计入树木与临时构筑物。</p>
+      <p class="disclaimer">地图数据 © OpenStreetMap contributors（ODbL 1.0）；园东湖为示意轮廓，非测绘数据。</p>
+    </footer>
+  </aside>
+
+  <!-- 右栏：地图 -->
+  <main id="map-wrap">
+    <canvas id="map" role="img" aria-label="校园地图：显示当前时刻的建筑阴影、最快路线与阴凉路线；可用左侧下拉框选择起终点；可切换平面 / 立体视图；鼠标滚轮可缩放" title="鼠标滚轮缩放（最小回到初始大小）"></canvas>
+    <div class="view-switch" role="group" aria-label="切换地图视图">
+      <button type="button" class="view-btn is-on" id="view-plan" data-iso="0" aria-pressed="true">平面</button>
+      <button type="button" class="view-btn" id="view-iso" data-iso="1" aria-pressed="false">立体</button>
+    </div>
+    <div id="legend">
+      <span><i class="lg lg-sun"></i>阳光</span>
+      <span><i class="lg lg-shade"></i>阴影</span>
+      <span><i class="lg lg-road"></i>道路</span>
+      <span><i class="lg lg-water"></i>水系</span>
+      <span><i class="lg lg-tree"></i>树</span>
+      <span><i class="lg lg-fast"></i>最快</span>
+      <span><i class="lg lg-cool"></i>阴凉</span>
+    </div>
+    <div id="compass">N<i id="compass-needle"></i></div>
+  </main>
+
+</div>
+
+<!-- 数据（.js 而非 .json：file:// 双击也能加载） -->
+<script src="data/meta.js"></script>
+<script src="data/buildings.js"></script>
+<script src="data/shadows.js"></script>
+<script src="data/routes.js"></script>
+<script src="data/graph.js"></script>
+<script src="data/basemap.js"></script>
+
+<script src="content/strings.js"></script>
+<script src="js/core.js"></script>
+<script src="js/trees.js"></script>
+<script src="js/plan.js"></script>
+<script src="js/iso.js"></script>
+<script src="js/proj.js"></script>
+<script src="js/router.js"></script>
+<script src="js/map.js"></script>
+<script src="js/app.js"></script>
+
+<!-- 绿色收益模块（全部新增文件；只读上面的路线长度，不改动原有逻辑） -->
+<script src="data/green-factors.js"></script>
+<script src="js/green-core.js"></script>
+<script src="content/strings-green.js"></script>
+<script src="js/textfx.js"></script>
+<script src="js/green-ui.js"></script>
+</body>
+</html>
