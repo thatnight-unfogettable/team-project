@@ -573,6 +573,12 @@ function makeCtx() {
     ctx.calls['measureText'] = (ctx.calls['measureText'] || 0) + 1;
     return { width: String(s || '').length * 6 };
   };
+  // 记下画了哪些字（用来断言"门名牌 / 树图例"确实落到画布上，而不是只存在于数据里）
+  ctx.texts = [];
+  ctx.fillText = function (s) {
+    ctx.calls['fillText'] = (ctx.calls['fillText'] || 0) + 1;
+    ctx.texts.push(String(s));
+  };
   return ctx;
 }
 
@@ -924,12 +930,15 @@ if (!jsLoadErr && !initErr) {
             src.indexOf('document.') < 0 && src.indexOf('fetch(') < 0;
         })());
 
-      // 平面视图：每棵树 = 树冠圆 + 受光面圆；另外画布上只有起终点两个圆也用 arc
+      // 平面视图：每棵树 = 树冠圆 + 受光面圆；画布上另有起终点 2 个圆、每扇门 2 个圆
       var arcsBefore = mapCtx.calls.arc || 0;
       W.APP.redraw();
       var arcDelta = (mapCtx.calls.arc || 0) - arcsBefore;
+      var gateArcs = CORE.gatesFromRoads(W.DATA_BASEMAP.roads, W.DATA_META.campus.ring).length * 2;
+      var expectArcs = treesA.length * 2 + 2 + gateArcs;
       ok('平面视图给每棵树画了「树冠 + 受光面」两个圆（真的画了，不是只在数据里）',
-        arcDelta === treesA.length * 2 + 2, '新增 arc=' + arcDelta + '，期望 ' + (treesA.length * 2 + 2) + '（树 ' + treesA.length + '×2 + 起终点 2）');
+        arcDelta === expectArcs, '新增 arc=' + arcDelta + '，期望 ' + expectArcs +
+        '（树 ' + treesA.length + '×2 + 起终点 2 + 门 ' + (gateArcs / 2) + '×2）');
 
       // 立体视图：树进同一个深度排序列表，树冠是以椭圆多边形画的（不是圆）
       var treeIsoView = W.ISO.fitView(W.PROJ.fit(1200, 800, 28), 1200, 800, W.ISO.FIT_FACTOR);
@@ -950,6 +959,63 @@ if (!jsLoadErr && !initErr) {
       ok('图例补了「树」一项（画布上有树，图例不能缺）',
         html.indexOf('lg-tree') >= 0 && read('styles.css').indexOf('.lg-tree') >= 0);
     }
+
+    /* --- 校门（道路 × 校园边界的交点，不是手工塞的坐标） --- */
+    var gatesA = CORE.gatesFromRoads(W.DATA_BASEMAP.roads, W.DATA_META.campus.ring);
+    var gatesB = CORE.gatesFromRoads(W.DATA_BASEMAP.roads, W.DATA_META.campus.ring);
+    ok('校门由「道路 × 校园边界」求交得到（4~8 扇）',
+      gatesA.length >= 4 && gatesA.length <= 8, '识别到 ' + gatesA.length + ' 扇：' + gatesA.map(function (g) { return g.name; }).join('/'));
+    ok('校门命名不重复（不会出现两个"北门"）',
+      (function () {
+        var seen = {};
+        for (var i = 0; i < gatesA.length; i++) {
+          if (seen[gatesA[i].name]) { return false; }
+          seen[gatesA[i].name] = 1;
+        }
+        return true;
+      })(), gatesA.map(function (g) { return g.name; }).join('/'));
+
+    var gateNames = gatesA.map(function (g) { return g.name; });
+    ok('北门/东门/南门/西门 四个正门都在（和校园图上的四个门对得上）',
+      ['北门', '东门', '南门', '西门'].every(function (n) { return gateNames.indexOf(n) >= 0; }),
+      gateNames.join('/'));
+
+    ok('每扇门都落在校园边界上（到边界 < 5 m）',
+      gatesA.every(function (g) {
+        var ring = W.DATA_META.campus.ring, best = Infinity;
+        for (var i = 0; i < ring.length; i++) {
+          var p = ring[i], q = ring[(i + 1) % ring.length];
+          var dx = q[0] - p[0], dy = q[1] - p[1];
+          var l2 = dx * dx + dy * dy;
+          var t = l2 > 0 ? ((g.x - p[0]) * dx + (g.y - p[1]) * dy) / l2 : 0;
+          t = Math.max(0, Math.min(1, t));
+          var d = Math.sqrt(Math.pow(g.x - (p[0] + t * dx), 2) + Math.pow(g.y - (p[1] + t * dy), 2));
+          if (d < best) { best = d; }
+        }
+        return best < 5;
+      }));
+
+    ok('门名与方位角一致（北 0°、东 90°、顺时针）',
+      gatesA.every(function (g) {
+        var dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+        var expect = dirs[Math.round(g.az / 45) % 8];
+        return g.name.indexOf(expect) === 0;
+      }), gatesA.map(function (g) { return g.name + '@' + g.az + '°'; }).join(' '));
+
+    ok('正门走主干道/校内路，便门走服务道/步道（门的大小不是随便定的）',
+      gatesA.every(function (g) {
+        var mainKinds = ['main', 'local'], sideKinds = ['service', 'path'];
+        return g.main ? mainKinds.indexOf(g.kind) >= 0 : sideKinds.indexOf(g.kind) >= 0;
+      }), gatesA.map(function (g) { return g.name + ':' + g.kind; }).join(' '));
+
+    ok('校门识别是确定性的（同一份数据两次一致）',
+      gatesA.length === gatesB.length && gatesA.every(function (g, i) {
+        return g.x === gatesB[i].x && g.y === gatesB[i].y && g.name === gatesB[i].name;
+      }));
+
+    ok('画布上真的画了门名牌（不是只算出来没用上）',
+      gatesA.every(function (g) { return mapCtx.texts.indexOf(g.name) >= 0; }),
+      '画布文字里含门名 ' + gatesA.filter(function (g) { return mapCtx.texts.indexOf(g.name) >= 0; }).length + '/' + gatesA.length);
   }
 
   var dial = registry['sun-dial'];
