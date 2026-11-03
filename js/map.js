@@ -276,6 +276,8 @@ window.MAP = (function () {
     }
 
     ctx.save();
+    // 与其余 8 层一致：标注坐标是 CSS px，必须先把变换乘上 dpr，否则 dpr>1 时字号减半并错位到左上
+    ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';

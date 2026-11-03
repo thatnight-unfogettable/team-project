@@ -801,6 +801,130 @@ if (W.ROUTER && W.ROUTER.ready() && anchors.length > 24) {
     registry['route-tag'].textContent);
 }
 
+/* ---------- 2.88 高分屏（dpr > 1）标注对齐回归 ----------
+   2.9 那个主沙箱把 devicePixelRatio 写死成 1（见上面 box.devicePixelRatio = 1），
+   所以"某个图层忘了乘 dpr"这类缺陷在既有断言里是**结构性看不见**的：
+   js/map.js 的 drawLabels 就这么漏过一次，dpr=2 时 54 个地名标注字号减半、
+   整体压到画布左上 1/4，而 101 条断言依然全绿。
+   这里另开一个 dpr=2 的沙箱，逐条记录"每次绘制文字时的变换矩阵与落位"，
+   专门盯这件事。 */
+(function dprRegression() {
+  var DPR = 2;
+  var CSS_W = 1200, CSS_H = 800;
+
+  function recCtx() {
+    var m = [1, 0, 0, 1, 0, 0], stack = [], c = { texts: [] };
+    c.font = '10px sans-serif';
+    c.fillStyle = c.strokeStyle = '';
+    c.lineWidth = 1; c.globalAlpha = 1;
+    c.textAlign = c.textBaseline = c.lineJoin = '';
+    c.setTransform = function (a, b, cc, d, e, f) { m = [a, b, cc, d, e, f]; };
+    c.save = function () { stack.push(m.slice()); };
+    c.restore = function () { if (stack.length) { m = stack.pop(); } };
+    ['clearRect', 'fillRect', 'beginPath', 'moveTo', 'lineTo', 'closePath', 'fill',
+      'stroke', 'drawImage', 'arc', 'setLineDash'].forEach(function (n) { c[n] = function () {}; });
+    c.measureText = function (s) { return { width: String(s).length * 6 }; };
+    c.fillText = c.strokeText = function (s, x, y) {
+      c.texts.push({ n: String(s), dev: [x * m[0] + m[4], y * m[3] + m[5]], a: m[0], font: String(c.font) });
+    };
+    return c;
+  }
+
+  function el(tag, id) {
+    var node = {
+      tagName: String(tag || 'div').toUpperCase(), id: id || '', style: {}, children: [], attributes: {},
+      className: '', textContent: '', value: '', max: '', width: 0, height: 0, parentElement: null,
+      _ls: {},
+      addEventListener: function (t, f) { (this._ls[t] = this._ls[t] || []).push(f); },
+      removeEventListener: function () {},
+      appendChild: function (ch) { this.children.push(ch); ch.parentElement = this; if (ch.id) { reg2[ch.id] = ch; } return ch; },
+      setAttribute: function (k, v) { this.attributes[k] = v; },
+      getAttribute: function (k) { return this.attributes[k]; },
+      getBoundingClientRect: function () { return { width: CSS_W, height: CSS_H, left: 0, top: 0 }; },
+      dispatch: function (t, ev) { var s = this._ls[t] || [], self = this; s.forEach(function (f) { f.call(self, ev || { type: t }); }); }
+    };
+    if (id) { reg2[id] = node; }
+    return node;
+  }
+  function canvasEl() {
+    var cv = el('canvas');
+    cv.getContext = function () { return cv._c || (cv._c = recCtx()); };
+    return cv;
+  }
+
+  var reg2 = {};
+  var doc2 = el('html');
+  doc2.body = el('body', 'body');
+  doc2.createElement = function (t) { return String(t).toLowerCase() === 'canvas' ? canvasEl() : el(t); };
+  doc2.createTextNode = function (s) { var n = el('#text'); n.nodeValue = String(s); return n; };
+  doc2.getElementById = function (id) { return reg2[id] || null; };
+
+  var W2 = { console: console };
+  W2.window = W2; W2.globalThis = W2;
+  vm.createContext(W2);
+  ['data/meta.js', 'data/buildings.js', 'data/shadows.js', 'data/routes.js',
+    'data/graph.js', 'data/basemap.js', 'content/strings.js', 'js/core.js'].forEach(function (rel) {
+    vm.runInContext(read(rel), W2, { filename: rel });
+  });
+  W2.document = doc2;
+  W2.devicePixelRatio = DPR;
+  W2.addEventListener = function () {};
+
+  var wrap2 = el('div', 'map-wrap');
+  var cv2 = canvasEl(); cv2.id = 'map'; reg2['map'] = cv2; cv2.parentElement = wrap2;
+  el('div', 'legend'); el('div', 'compass'); el('aside', 'panel'); el('div', 'app');
+  ['time-label', 'time-slider', 'sun-elev', 'sun-az', 'sun-hint', 'pick-hint', 'route-tag',
+    'fast-min', 'fast-sun', 'fast-shade', 'fast-len', 'cool-min', 'cool-sun', 'cool-shade',
+    'cool-len', 'delta', 'demo-date', 'data-flag', 'notes', 'start-select', 'end-select']
+    .forEach(function (id) { el('div', id); });
+
+  ['js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
+    vm.runInContext(read(rel), W2, { filename: rel });
+  });
+  doc2.dispatch('DOMContentLoaded');
+
+  var ctx2 = cv2.getContext('2d');
+  ctx2.texts.length = 0;
+  W2.APP.redraw();                       // 干净地重绘一帧，只留这一帧的绘制记录
+
+  var names = {};
+  (W2.DATA_BASEMAP.labels || []).forEach(function (L) { names[L.n] = L; });
+  // 同名标注取坐标最近的那条期望值，避免因重名误判
+  function expectDev(text, dx, dy) {
+    var L = names[text];
+    if (!L) { return null; }
+    var v = W2.PROJ.fit(CSS_W, CSS_H, 28);
+    return [v.x(L.x) * DPR, v.y(L.y) * DPR];
+  }
+
+  var labelDraws = ctx2.texts.filter(function (t) { return names[t.n]; });
+  var wrongTransform = labelDraws.filter(function (t) { return Math.abs(t.a - DPR) > 1e-6; }).length;
+  var maxErr = 0, checked = 0;
+  labelDraws.forEach(function (t) {
+    var e = expectDev(t.n, t.dev[0], t.dev[1]);
+    if (!e) { return; }
+    checked += 1;
+    maxErr = Math.max(maxErr, Math.abs(t.dev[0] - e[0]), Math.abs(t.dev[1] - e[1]));
+  });
+  var minFontPx = Infinity;
+  labelDraws.forEach(function (t) {
+    var mpx = /(\d+(?:\.\d+)?)px/.exec(t.font);
+    if (mpx) { minFontPx = Math.min(minFontPx, parseFloat(mpx[1])); }
+  });
+
+  ok('dpr=2 画布按设备像素分配（CSS ' + CSS_W + '×' + CSS_H + ' → ' + (CSS_W * DPR) + '×' + (CSS_H * DPR) + '）',
+    cv2.width === CSS_W * DPR && cv2.height === CSS_H * DPR, cv2.width + '×' + cv2.height);
+  ok('dpr=2 地名标注确实画出来了（避让后 ≥ 40 次文字绘制）',
+    labelDraws.length >= 40, labelDraws.length + ' 次');
+  ok('dpr=2 标注图层绘制时套了 dpr 变换（无一条以 scale=1 落笔）',
+    labelDraws.length > 0 && wrongTransform === 0,
+    'scale≠' + DPR + ' 的标注绘制 ' + wrongTransform + ' / ' + labelDraws.length + ' 次');
+  ok('dpr=2 标注落位 = CSS 坐标 × dpr（不被压进画布左上 1/' + (DPR * DPR) + '）',
+    checked > 0 && maxErr < 0.5, '最大偏差 ' + maxErr.toFixed(2) + ' 设备像素（比对 ' + checked + ' 条）');
+  ok('dpr=2 标注字号未被减半（CSS px 语义保留，最小 ≥ 10px）',
+    isFinite(minFontPx) && minFontPx >= 10, '最小字号 ' + (isFinite(minFontPx) ? minFontPx : '--') + 'px');
+})();
+
 /* ---------- 3. 汇总 ---------- */
 console.log('--------------------------------------------------');
 console.log('SMOKE: PASS ' + pass + ' / FAIL ' + fail);
