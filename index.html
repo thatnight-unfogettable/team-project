@@ -54,7 +54,11 @@
     <section class="block">
       <div class="block-head">
         <h2>路线对比</h2>
-        <output id="route-tag">实时计算</output>
+        <div class="pair-switch" role="group" aria-label="切换示例起终点">
+          <button type="button" class="pair-btn is-on" id="pair-a" data-pair="0" aria-pressed="true">示例 A</button>
+          <button type="button" class="pair-btn" id="pair-b" data-pair="1" aria-pressed="false">示例 B</button>
+        </div>
+        <output id="route-tag">预计算</output>
       </div>
 
       <div class="route-card" id="card-fast">
@@ -75,7 +79,7 @@
         <div class="rc-shade">阴影覆盖 <b id="cool-shade">--</b>　全长 <b id="cool-len">--</b> 米</div>
       </div>
 
-      <p class="delta" id="delta">--</p>
+      <p class="delta" id="delta" role="status" aria-live="polite">--</p>
     </section>
 
     <!-- 数据说明 -->
@@ -92,7 +96,7 @@
 
   <!-- 右栏：地图 -->
   <main id="map-wrap">
-    <canvas id="map"></canvas>
+    <canvas id="map" role="img" aria-label="校园地图：显示当前时刻的建筑阴影、最快路线与阴凉路线；可用左侧下拉框选择起终点"></canvas>
     <div id="legend">
       <span><i class="lg lg-sun"></i>阳光</span>
       <span><i class="lg lg-shade"></i>阴影</span>
