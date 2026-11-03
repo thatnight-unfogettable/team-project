@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>凉径 · ShadeRoute Lite —— 入口</title>
+<meta name="description" content="热浪天走哪条路：校园阴影路线对比、任意两点现场算路、步行/骑行的碳排与热量收益。纯静态、零网络。">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles-home.css">
+</head>
+<body class="home-body">
+
+<div id="home">
+
+  <div class="sky" aria-hidden="true"><span class="sun" id="h-sun"></span></div>
+
+  <header class="hero">
+    <p class="kicker" id="h-kicker"></p>
+    <h1 class="title" id="h-title">凉径 · ShadeRoute Lite</h1>
+    <p class="slogan" id="h-slogan">&nbsp;</p>
+    <p class="place" id="h-place"></p>
+
+    <div class="cta-row">
+      <a class="cta" href="index.html" id="h-cta">进入路线对比</a>
+      <span class="cta-hint" id="h-hint"></span>
+    </div>
+
+    <p class="rotator" id="h-rot" aria-live="polite"></p>
+  </header>
+
+  <!-- 核心结论：全部由 data/*.js 现场算出，页面上不写死任何数字 -->
+  <section class="stats" id="h-stats" aria-label="演示结论数据">
+    <div class="stat stat-hero">
+      <span class="stat-k">少晒</span>
+      <b class="stat-v" id="s-save"></b>
+      <span class="stat-s" id="s-save-note"></span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">多走</span>
+      <b class="stat-v" id="s-extra"></b>
+      <span class="stat-s" id="s-extra-note"></span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">阴影覆盖</span>
+      <b class="stat-v" id="s-shade"></b>
+      <span class="stat-s">最快 → 阴凉</span>
+    </div>
+    <div class="stat">
+      <span class="stat-k">暴晒时长</span>
+      <b class="stat-v" id="s-sun"></b>
+      <span class="stat-s">分钟</span>
+    </div>
+  </section>
+
+  <!-- 新增：绿色收益预告，同样由 green-core 现场算 -->
+  <section class="green-teaser" id="h-green" aria-label="步行这段路的碳排与热量收益">
+    <div class="gt-head">
+      <h2>这一段路，换成<span id="h-gt-mode">步行</span></h2>
+      <p class="gt-note" id="h-gt-note"></p>
+    </div>
+    <ul class="gt-list">
+      <li><span>少排放</span><b id="g-co2"></b></li>
+      <li><span>净消耗</span><b id="g-kcal"></b></li>
+      <li><span>步数</span><b id="g-steps"></b></li>
+      <li><span>每周 5 趟一年</span><b id="g-year"></b></li>
+    </ul>
+    <p class="gt-src" id="h-gt-src"></p>
+  </section>
+
+  <nav class="cards" id="h-cards" aria-label="功能入口">
+    <a class="card" href="index.html">
+      <span class="card-no">01</span>
+      <h3>阴影路线对比</h3>
+      <p>同一时刻两条路线，暴晒分钟与阴影覆盖率直接可比；拖时间轴看结论怎么变。</p>
+    </a>
+    <a class="card" href="index.html">
+      <span class="card-no">02</span>
+      <h3>任意两点现场算路</h3>
+      <p>53 个校园地名，或在地图上点两下；浏览器本地跑 Dijkstra，不发任何请求。</p>
+    </a>
+    <a class="card" href="index.html">
+      <span class="card-no">03</span>
+      <h3>绿色收益与健身口径</h3>
+      <p>选步行或骑行，给出少排的二氧化碳与净消耗的大卡，来源与单位口径可当场点开。</p>
+    </a>
+  </nav>
+
+  <!-- 动态文本效果：楼名跑马灯（数据来自底图标注表） -->
+  <section class="ticker-wrap" aria-label="校园地名滚动">
+    <div class="ticker"><div class="mq-track" id="h-mq"></div></div>
+  </section>
+
+  <footer class="home-foot">
+    <p>演示日期：<b id="h-date"></b>　·　校园：<b id="h-campus"></b></p>
+    <p class="foot-dim">回归测试：<code>node tools/smoke.js</code> ＋ <code>node tools/smoke-green.js</code>（入口页与绿色模块独立断言）</p>
+    <p class="foot-dim">地图数据 © OpenStreetMap contributors（ODbL 1.0）；园东湖为示意轮廓，非测绘数据。</p>
+    <p class="foot-dim">本页与工具页样式互不覆盖；关闭系统动效偏好时，所有文字动画直接落终值。</p>
+  </footer>
+
+</div>
+
+<!-- 数据与逻辑：全部本地文件，零外链 -->
+<script src="data/meta.js"></script>
+<script src="data/routes.js"></script>
+<script src="data/basemap.js"></script>
+<script src="data/green-factors.js"></script>
+<script src="js/core.js"></script>
+<script src="js/green-core.js"></script>
+<script src="js/textfx.js"></script>
+<script src="content/strings-green.js"></script>
+<script src="js/home.js"></script>
+</body>
+</html>

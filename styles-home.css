@@ -1,0 +1,247 @@
+/* ============================================================
+   凉径 ShadeRoute Lite —— 入口页样式（新增文件）
+   只作用于 .home-body / #home 下的新名字，不覆盖工具页任何选择器。
+   颜色变量全部来自 styles.css 的 :root，两页视觉同源。
+   ============================================================ */
+
+.home-body {
+  height: auto;
+  min-height: 100%;
+  overflow-x: hidden;
+  background:
+    radial-gradient(1100px 520px at 82% -8%, #24304a 0%, rgba(36, 48, 74, 0) 62%),
+    radial-gradient(760px 420px at 8% 104%, #1b2536 0%, rgba(27, 37, 54, 0) 60%),
+    var(--bg);
+}
+
+#home {
+  position: relative;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+/* ---------- 背景太阳（位置由 js/home.js 按演示帧高度角挪） ---------- */
+.sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.sun {
+  position: absolute;
+  right: 12%;
+  top: 34%;
+  width: 190px;
+  height: 190px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 36%, rgba(255, 209, 102, .30), rgba(255, 209, 102, .06) 58%, transparent 72%);
+  filter: blur(.4px);
+  animation: sun-drift 26s ease-in-out infinite alternate;
+}
+@keyframes sun-drift { from { transform: translateY(-10px); } to { transform: translateY(14px); } }
+
+.hero, .stats, .green-teaser, .cards, .ticker-wrap, .home-foot { position: relative; z-index: 1; }
+
+/* ---------- 主视觉 ---------- */
+.kicker {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  letter-spacing: 2.4px;
+  color: var(--text-dim);
+  min-height: 1.4em;
+}
+.title {
+  margin: 0;
+  font-size: clamp(34px, 6.4vw, 62px);
+  letter-spacing: 4px;
+  font-weight: 800;
+  line-height: 1.15;
+  color: var(--text);
+}
+.slogan {
+  margin: 14px 0 4px;
+  font-size: clamp(15px, 2.4vw, 20px);
+  color: var(--sun);
+  min-height: 1.5em;
+  letter-spacing: .6px;
+}
+.place { margin: 0; font-size: 12.5px; color: var(--text-dim); }
+
+/* 打字机光标 */
+.tx-caret {
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--sun);
+  animation: caret-blink .82s steps(2, start) infinite;
+}
+@keyframes caret-blink { to { visibility: hidden; } }
+
+.cta-row { display: flex; align-items: center; gap: 14px; margin-top: 22px; flex-wrap: wrap; }
+.cta {
+  display: inline-block;
+  padding: 11px 24px;
+  border-radius: 999px;
+  background: var(--sun);
+  color: #2a1f00;
+  font-weight: 700;
+  font-size: 14.5px;
+  letter-spacing: 1px;
+  text-decoration: none;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+.cta:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(255, 209, 102, .22); }
+.cta:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+.cta-hint { font-size: 11.5px; color: var(--text-dim); }
+
+.rotator {
+  margin: 20px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  min-height: 2.2em;
+  max-width: 62ch;
+}
+
+/* ---------- 结论数字 ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stat-k { font-size: 11px; letter-spacing: 1.4px; color: var(--text-dim); }
+.stat-v {
+  font-size: 26px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.1;
+}
+.stat-s { font-size: 10.5px; color: var(--text-dim); line-height: 1.5; }
+.stat-hero { border-color: #3a4763; background: linear-gradient(160deg, #1c2434, var(--panel)); }
+.stat-hero .stat-v { color: var(--sun); font-size: 34px; }
+
+/* ---------- 绿色收益预告 ---------- */
+.green-teaser {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cool);
+  border-radius: 12px;
+  background: linear-gradient(120deg, rgba(56, 193, 114, .07), rgba(56, 193, 114, 0) 46%), var(--panel);
+  padding: 18px 20px;
+}
+.gt-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.green-teaser h2 { margin: 0; font-size: 16px; letter-spacing: .8px; color: var(--text); }
+.gt-note { margin: 0; font-size: 11px; color: var(--text-dim); flex: 1 1 240px; }
+.gt-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.gt-list li {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #141a24;
+}
+.gt-list span { display: block; font-size: 10.5px; color: var(--text-dim); letter-spacing: .8px; margin-bottom: 4px; }
+.gt-list b {
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--cool);
+}
+.gt-src { margin: 12px 0 0; font-size: 10.5px; line-height: 1.65; color: var(--text-dim); }
+
+/* 步行 / 骑行切换（与工具页按钮同源） */
+.gt-switch { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.gt-btn {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--text-dim);
+  background: #141a24;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.gt-btn:hover { color: var(--text); border-color: #3d4a5f; }
+.gt-btn.is-on { color: #171d28; background: var(--cool); border-color: var(--cool); font-weight: 700; }
+.gt-btn:focus-visible { outline: 2px solid var(--sun); outline-offset: 2px; }
+
+/* ---------- 三张入口卡 ---------- */
+.cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 16px 16px 18px;
+  transition: transform .18s ease, border-color .18s ease, background-color .18s ease;
+}
+.card:hover { transform: translateY(-3px); border-color: #44536f; background: var(--panel-2); }
+.card:focus-visible { outline: 2px solid var(--sun); outline-offset: 3px; }
+.card-no { font-size: 11px; letter-spacing: 2px; color: var(--text-dim); }
+.card h3 { margin: 8px 0 6px; font-size: 15px; color: var(--text); }
+.card p { margin: 0; font-size: 11.5px; line-height: 1.7; color: var(--text-dim); }
+
+/* ---------- 楼名跑马灯 ---------- */
+.ticker-wrap {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+  overflow: hidden;
+}
+.ticker { overflow: hidden; width: 100%; }
+.mq-track {
+  display: inline-flex;
+  gap: 26px;
+  white-space: nowrap;
+  will-change: transform;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mq-item::before { content: '◦ '; color: var(--sun); }
+.mq-static { white-space: normal; }
+
+/* ---------- 页脚 ---------- */
+.home-foot { font-size: 11.5px; color: var(--text-dim); line-height: 1.9; }
+.home-foot p { margin: 0; }
+.home-foot b { color: var(--text); font-weight: 600; }
+.foot-dim { color: #6d7d94; }
+.home-foot code {
+  background: #141a24;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10.5px;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  #home { padding: 34px 16px 56px; gap: 26px; }
+  .stats, .gt-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cards { grid-template-columns: 1fr; }
+  .stat-hero .stat-v { font-size: 28px; }
+  .sun { width: 140px; height: 140px; right: 4%; }
+}
+
+/* ---------- 尊重系统"减少动态效果"：与 js/textfx.js 同步 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .sun, .tx-caret { animation: none !important; }
+  .cta, .card, .gn-mode-card { transition: none !important; }
+  .cta:hover, .card:hover { transform: none; box-shadow: none; }
+  .mq-track { transform: none !important; }
+}

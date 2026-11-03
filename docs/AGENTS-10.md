@@ -14,11 +14,11 @@
 ## 11. 目录与文件（唯一权威）
 
 ```
-shaderoute/                                  # 代码合计 5201 行（前端 1377 / 工具链 3259 / 页面 565）
+shaderoute/                                  # 代码合计 8297 行（前端 2550 / 工具链 4518 / 页面 1229）
 ├── index.html              # 页面骨架（123 行，含起终点下拉 + 地图点选）
 ├── styles.css              # 样式（426 行）
 ├── content/strings.js      # 全部文案与免责说明，含 OSM 署名（16 行）
-├── js/                     # 前端逻辑合计 1377 行
+├── js/                     # 前端逻辑合计 2550 行
 │   ├── proj.js             # 经纬度 ↔ 屏幕坐标（43 行）
 │   ├── core.js             # 纯函数：shadeMeters / routeSummary / WALK_SPEED（284 行）
 │   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（227 行 / 7.9 KB）
@@ -30,6 +30,7 @@ shaderoute/                                  # 代码合计 5201 行（前端 13
 │   ├── graph.js            # 101.2 KB：474 节点 / 613 边（毫米精度）/ 31 帧暴晒千分比 / 53 地名
 │   ├── basemap.js          # 32.2 KB 底图：{roads:[{t,p}], water:[{n,p,approx}], labels:[{n,x,y,k,r,a}]}
 │   ├── shadows.js          # 31 帧 × 285 环（861.6 KB）
+│   ├── green-factors.js  # 绿色收益因子（129 行 / 7.1 KB）
 │   ├── routes.js           # 31 帧 × 2 pairs：[{fastest:{minutes,sun_minutes,length_m}, cool:{...}}]
 │   ├── height-report.csv   # 60 行 6 列
 │   └── raw/
@@ -37,9 +38,12 @@ shaderoute/                                  # 代码合计 5201 行（前端 13
 │       ├── buildings.json  # 555 栋（bbox 原始，含校外）
 │       ├── ways.json       # 297 条 way（bbox 原始）
 │       └── water.json      # [{name:"园东湖", ring[[x,y],...40], approx:true}]（lakering 反推的示意轮廓）
-└── tools/                  # 工具链合计 3259 行（比前端还长，重点在数据）
+└── tools/                  # 工具链合计 4518 行（比前端还长，重点在数据）
     ├── build.py            # 零依赖管线（1791 行）：sample/osm/fetch/import/shadows/routes/check/all/basemap/water/lakering/waterblob
     ├── smoke.js            # 106 条断言（936 行）
+    ├── smoke-green.js        # 159 条断言（322 行）：绿色模块 + 入口页
+    ├── green-ui-cases.js     # 界面集成断言（447 行）
+    ├── domstub.js            # 测试用 DOM 桩（320 行）
     ├── console-check.js    # 浏览器控制台手动核对脚本（247 行，含底图 4.5 节）
     └── preview.py          # 无浏览器 PNG 预览（285 行）：按 map.js 图层重画，沙箱自查用
 ```
@@ -59,6 +63,7 @@ shaderoute/                                  # 代码合计 5201 行（前端 13
 ## 13. 测试方式
 
 - `node tools/smoke.js` → **106 条断言全过**（退出码 0）。
+- `node tools/smoke-green.js` → **159 条断言全过**（退出码 0）：绿色收益模块与入口页，独立一套，不动上面那 106 条。
 - 断言覆盖：数据契约（date=2026-11-02、31 帧、285 环、`src` 分布 21/264、14:00 数值、height-report 61 行 6 列）+ 前端纯函数（`shadeMeters`、`routeSummary` 文案精度）+ **7 条底图断言**（`data/basemap.js` 结构完整、道路全部来自本地 OSM 路网（297 条 way 裁成 296 段）、四档线型齐全、所有道路坐标在 bbox±60 m 内、楼名标注全部在校园 bbox 内、标注数 ≥60、按重要度排序）+ **4 条湖断言**（园东湖已画上、湖面是多边形且面积 5000–40000 m²、`approx=true`、湖名以 `k=w` 进标注表）+ **6 条校园边界回归**（建筑质心在校内、路线采样点在校内、每帧阴影环与校园有交集、14:00 两条路线最大偏离 ≤120 m、校园名含"中山大学/南校园"、面积在 1.0~1.4 km²）+ **17 条算路断言**（62 个「帧 × 起终点」对拍：长度**全等、差 0 米**、暴晒差 ≤0.05 分钟；同点提示、任意两地名可算、往返对称、5 km 外拒绝、中心点吸附、4 条地图点选）+ **5 条高分屏 dpr 断言**（dpr=2 下标注图层套了 dpr 变换、落位 = CSS 坐标 × dpr、字号未减半、画布按设备像素分配）。
 - 手动冒烟：双击 `index.html` → 拖滑块 07:00–17:00 → 两组起终点 → **下拉换两个地名 / 地图点两下** → 断网刷新。
 - 14:00 卡片必须显示「多走 44 米，少晒 4.0 分钟。」（多一个空格都算错）。
@@ -157,7 +162,7 @@ window.ROUTER = {
 - 数据：已换成**校园多边形**版本（1.20 km² / 285 栋 / 613 边 / 143 回路），`CAMPUS_ONLY = True`，`date = 2026-11-02`，31 帧。
 - 功能：**任意两点现场算路**（53 个校园地名 + 地图点选，`data/graph.js` 101.2 KB + `js/router.js` 227 行），与预计算 62 组合对拍长度全等。
 - 底图：`data/basemap.js`（32.2 KB）已上线——**296 段道路**（四档线型）+ **1 处示意水面**（园东湖，16,814 m² ≈1.7 万，路网环路反推、`approx`、40 顶点）+ **61 条标注**（60 楼名 + 湖名）+ 图例「道路 / 水系」，地图 **9 层**渲染；**湖是示意轮廓（半透明 + 虚线边），不是测绘数据**；**路名仍 0 条**（`roadnames.json` 为空，待 `build.py water`，属有意降级）。
-- 测试：`node tools/smoke.js` **106 条全过**（含 7 条底图断言 + 4 条湖断言）。
-- 数据体积：页面加载约 **1.08 MB（1104.2 KB）**，阴影 861.6 KB 是大头。
+- 测试：`node tools/smoke.js` **106 条全过**（含 7 条底图断言 + 4 条湖断言）＋ `node tools/smoke-green.js` **159 条全过**（绿色收益 + 入口页 + 零干扰对照）。
+- 数据体积：页面加载约 **1.09 MB（1111.3 KB）**，阴影 861.6 KB 是大头；入口页只加载 101 KB（不含 shadows/graph）。
 - 文档：README + 6 份 docs 已同步到新口径（"多走 44 米，少晒 4.0 分钟"）；另有 lead 维护的 `docs/EXAMPLE-QUERIES.md` 实测表。
 - 待补：页面截图（14:00 / 12:00 / 16:40 / 07:00 / 任意两点）、11-02 实拍、3 分钟 MP4、Network 0 请求截图。
