@@ -1,212 +1,92 @@
-# AGENTS.md —— 本项目的 agent 协作规则
+# AGENTS.md —— 凉径 · ShadeRoute Lite（单人 + AI agent 协作）
 
-> **放置位置**：项目仓库根目录（`AGENTS.md`）。每个成员机器上的 agent 开新会话时会自动读到它。
->
-> **每个人只需要改本节的 3 个字段**（下面第 1 节），其余内容 4 个人完全一致，**不要各自改动**（要改就由 lead 改并提交，大家 pull）。
+> **本文件是本仓库唯一的"协作与流程"权威**；数字/口径以 `docs/AGENTS-10.md` 为唯一权威。
+> 两者冲突时：流程看本文件，数字看 `docs/AGENTS-10.md`，且必须当次修掉冲突。
+> 适用基线：commit `b2b212d` 之后（2026-11-03 起）。
 
----
+## 0. 一句话
+中山大学广州校区南校园「热浪天走哪条路」决策工具：浏览器端纯静态、离线、零依赖；
+数据由 `tools/build.py` 预计算成 `data/*.js`，页面只查表 + 现场跑 Dijkstra。
 
-## 0. 我需要改的只有这 3 行
+## 1. 事实清单（先看这张表，别再按任何模板假设）
 
-| 字段 | 说明 | 例子 |
+| 项 | 事实 |
+|---|---|
+| 目录 | `content/ data/ docs/ js/ tools/` + `index.html` + `styles.css` |
+| **没有** | `src/`、`tests/`、`config/`、`package.json` |
+| 前端 | `js/{proj,core,router,map,app}.js`，原生 JS + Canvas，经典 `<script>` |
+| 工具链 | `tools/build.py`（零第三方依赖，13 个子命令）、`tools/smoke.js`、`console-check.js`、`preview.py`、`tools/ci/*` |
+| 技术栈硬约束 | 无 npm / 无框架 / 无构建工具 / 无 CDN / 运行时零网络；`file://` 双击可用 |
+| 数据 | `data/raw/*.json` = 原始抓取（**只读**）；`data/*.js` = **生成物**（`window.DATA_*`） |
+| 测试 | `node tools/smoke.js`，退出码 0 才算过 |
+| CI | `.github/workflows/smoke.yml`：`smoke` / `data-integrity` / `hygiene` / `commit-msg` |
+| 协作 | **单人 + 1~N 个 AI agent**；历史上写的 hub relay / 4 人分工 / pytest **全部作废** |
+| 分支 | `main` 单分支；有第二个人/agent 长期参与时才开 `feat/<name>` + PR |
+
+## 2. 目录职责
+| 路径 | 谁能改 | 说明 |
 |---|---|---|
-| `huang` | 你的 agent id（relay 里的身份，必须和 token 对应） | `jiang` |
-| `lead` | `lead` 或 `member` | `member` |
-| `docs/,README.md,config/` | 你**只能改**的路径（逗号分隔） | `src/backend/` |
+| `js/`、`content/`、`index.html`、`styles.css` | 人/agent 均可 | 前端逻辑与文案 |
+| `tools/build.py` | 人/agent 均可 | 预计算管线；改常量（`WALK_SPEED`/`COOL_FACTOR`/`DEMO_DATE`/`BBOX`/`CAMPUS_ONLY`/`HEIGHT_REPORT_LIMIT`）必须重跑 `shadows`+`routes`+`basemap` 并重跑 smoke |
+| `data/raw/*.json` | **只能由 `build.py` 写** | 原始数据；手工编辑会在下次构建时被覆盖 |
+| `data/*.js` | **只能由 `build.py` 写** | 生成物；禁止手改、禁止手工解决冲突 |
+| `data/.bak/` | `build.py` 自动备份 | 已 gitignore，可随时删 |
+| `docs/`、`README.md` | 人/agent 均可 | 口径文档；改数字见 §5 |
+| `.github/`、`.gitignore`、`.gitattributes`、`.editorconfig` | 人 | 仓库基座 |
 
-改完检查一遍：`hub whoami` 打印的 id 必须和 `huang` 一模一样。
+## 3. 写作用域（单人也要守，因为 agent 会并行）
+1. **同一时刻只允许一个进程跑 `python tools/build.py`**：它会重写 6 个 `data/*.js`。并发会让 `smoke.js` 读到半截文件（现已加前置守卫，但仍是坏状态）。
+2. agent 并行时，`data/` 与 `tools/build.py` 只能有一个 owner；需要同时改前端和数据时，先改前端、再串行跑构建。
+3. 不要为了"让测试过"去改 `data/*.js` 的数值 —— 那是改口径，见 §5。
 
----
+## 4. 提交规范
+- 分支：单人直接提交 `main`；多人/多 agent 用 `feat/<name>` + PR（`main` 上有 CI 状态检查）。
+- 提交信息：`type(scope): 摘要`，`type ∈ feat|fix|polish|docs|test|chore`；**一次提交只做一件事**。
+- 禁止一个提交里同时出现「文档 + 生成物 + 前端 + 工具链」；超过 20 个文件或 1500 行请拆。
+- 提交前必做：`node tools/smoke.js` 通过 + `git status --porcelain` 只含预期文件。
+- 可选：`git config core.hooksPath .githooks` 启用 pre-commit（自动跑 smoke + 数据检查）。
+- 禁止提交：`*.bak`、`.env*`、`*.token`、`*.pem`、`*.key`、`data/hub.db*`、`node_modules/`、任何 `C:\Users\...` 绝对路径。
 
-## 1. 我是谁
+## 5. 改动 → 必须重跑什么（照表执行，别猜）
 
-- 成员名（agent id）：`huang`
-- 角色：`lead`
-  - `lead`：拆任务、答疑、复核、**唯一有权合并 main 的人**
-  - `member`：领任务、实现、自测、汇报
-- 我的写作用域（**只准改这些路径**）：`docs/,README.md,config/`
-- 我的分支：`feat/huang`
-
-### 4 人分工表（由 lead 在本节维护，成员按自己的行执行）
-
-| agent id | 角色 | 写作用域 | 主要交付 | 测试命令 |
-|---|---|---|---|---|
-| `huang` | lead | `docs/`, `README.md`, `config/` | 接口定义、拆任务、合并 main、验收 | 见第 10 节 |
-| `jiang` | member | `src/backend/` | 后端接口实现 | 见第 10 节 |
-| `xu` | member | `src/frontend/` | 前端页面与交互 | 见第 10 节 |
-| `li` | member | `src/core/`, `tests/` | 核心逻辑 + 测试 | 见第 10 节 |
-
-> 这张表是**边界约定**，不是能力限制。要跨 scope 改东西，走第 3 节第 2 条。
-
----
-
-## 2. 协作总线（跨机器通信）
-
-所有跨机器通信都走 **agent-hub relay**，不走人肉转述、不依赖任何 IM 群、不靠"谁喊一声"。
-
-- 服务地址与 token：`~/.dsh-hub/config.json`（或环境变量 `HUB_URL` / `HUB_TOKEN`）
-- CLI：`hub.cmd`（Windows）/ `hub.sh`（Linux/macOS）
-- 收件游标：`~/.dsh-hub/cursor`，`hub inbox` 会自动推进，不会重复
-
-**每次开始干活前，第一件事就是 `hub inbox`。**
-
----
-
-## 3. 铁律（违反会直接阻塞整个项目）
-
-1. **绝不直接 push `main`**。只 push 自己的 `feat/huang`，合并由 lead 做。
-2. **只改自己的写作用域**。需要改别人的文件 → 先 `hub send --to <owner> --kind question`，等确认再动。
-3. **动手前先 `git pull --rebase`**，收工时 `git push`。冲突自己解决不了 → 发 `blocker`，别硬推。
-4. **领任务必须走 CAS**：`hub claim <id> --rev <n>`。收到 `REVISION_CONFLICT` 就重新 `hub task <id>` 再决定，**绝不重试同一个 rev**。
-5. **消息必须可执行**：带任务号、分支名、commit、下一步。不写"我在弄了"这种无信息量的话。
-6. **不伪造进度**：没跑通的不要说 done；`done` 必须带 summary 说明**怎么验证的**。
-7. **不外泄 token**：不把 `~/.dsh-hub/`、`data/hub.db`、`*.token` 提交进仓库。
-8. **同一问题失败 2 次就停**：发 `blocker` 给 lead，附报错原文。空转比卡住更浪费。
-
----
-
-## 4. 每一轮的工作循环
-
-```bash
-# 0) 同步
-git pull --rebase
-hub inbox                       # 有新消息先处理（可能被重新指派/要求改方案）
-
-# 1) 认领任务
-hub tasks                       # 看有哪些 pending
-hub task Txxxx                  # 看详情和当前 revision
-hub claim Txxxx --rev 1         # 拿到立即 claim，避免撞车
-
-# 2) 干活
-git checkout -b feat/huang   # 首次创建，之后复用同一分支
-#    ... 只改 docs/,README.md,config/ 内的文件 ...
-#    ... 跑测试 ...
-
-# 3) 提交推送
-git add -A
-git commit -m "feat(<scope>): <做了什么> (Txxxx)"
-git push -u origin feat/huang
-
-# 4) 汇报收尾
-hub send --to huang --kind done --task Txxxx --body "Txxxx 完成：<结论>；分支 feat/huang @ <sha>；验证：<命令与结果>"
-hub done Txxxx --rev 2 --summary "已实现并自测通过，等待合并"
-```
-
-> 报 `done` 前先自问：**别人能凭这条消息复现我的验证吗？** 不能就补上命令和结果。
-
----
-
-## 5. 消息类型
-
-| kind | 什么时候用 | 必带内容 |
+| 改了 | 必须跑 | 必须同步的文档 |
 |---|---|---|
-| `status` | 进度同步（里程碑、阶段完成） | 结论 + 分支/commit + 下一步 |
-| `question` | 需要别人决策才能继续 | 问题 + 我的建议方案 + 需要谁回答 |
-| `blocker` | 真卡住（缺权限/接口未就绪/依赖缺失） | 卡点 + 已尝试 + 需要谁做什么 |
-| `decision` | 我定了接口/架构，广播全员 | 决定 + 理由 + 影响面 |
-| `review` | 请求复核 | 分支 + 改了什么 + 重点看哪里 |
-| `done` | 任务完成 | 任务号 + 验证方式 |
+| `tools/build.py` 的常量/算法 | `python tools/build.py shadows` + `routes` + `basemap`，再 `node tools/smoke.js` | `docs/AGENTS-10.md` §10-14、`README.md` §1/§7、`docs/PPT-OUTLINE.md`、`docs/PITCH.md` |
+| `js/` | `node tools/smoke.js` | 一般无需 |
+| `data/raw/*.json`（重新抓数） | 全套 `python tools/build.py shadows routes basemap` + smoke | 同上 + `docs/DATA-SOURCES.md` |
+| 卡片文案/口径 | `node tools/smoke.js`（有逐字断言） | `README.md` §1.2、`docs/AGENTS-10.md` §14 |
+| 文档 | `node tools/smoke.js`（它也会读文档里的数字断言） | — |
 
-- 点名：`--to jiang`
-- 全员广播：`--to all`
-- 关联任务：`--task Txxxx`（方便以后按任务追溯）
+## 6. 发版
+- 版本号 SemVer：口径变化 → MINOR，纯修 bug → PATCH，交付版 → MINOR。
+- 发版动作：更新 `CHANGELOG.md` → `git tag -a vX.Y.Z -m "..."` → `git push origin vX.Y.Z`。
+- 每个演示/交付节点必须有一个 tag。
 
----
+## 7. GitHub 门禁（配置好之后的约定）
+- `main` 必须过 CI（`.github/workflows/smoke.yml` 的 `smoke` + `data-integrity` + `hygiene`）才能合并。
+- 禁止 force push 到 `main`、禁止直接删除 `main`。
+- PR 必须填模板：改了什么 / 动了哪些权威数字（旧值→新值）/ 验证命令的真实输出 / 风险。
 
-## 6. 任务板规则
+## 8. 保密与合规
+- **OSM 数据 ODbL 1.0**：页面页脚与 `content/strings.js` 必须保留 "© OpenStreetMap contributors"；由 `data/raw/*.json` 派生的几何数据同样受 ODbL 约束，**不能单独以更严格许可再发布**。
+- 湖是**示意轮廓**（`approx: true`），任何对外材料都必须带"不是测绘数据"这句。
+- token 只放环境变量，**永不进仓库**；一旦怀疑泄漏：先撤销/轮换密钥，再考虑清历史（顺序不能反）。
+- 严禁把 `C:\Users\...` 这类本机绝对路径写进任何文件（CI 会拦）。
 
-- 任务由 **lead** 建（`hub new-task`）；成员可以为自己发现的子任务建，但要带 `--scope` 标明归属。
-- 认领：`hub claim <id> --rev <n>`；被别人占了返回 `TASK_TAKEN`。
-- 依赖：`hub block <id> --rev <n> --by T1,T2`（依赖完成后 lead 解除）。
-- 完成：`hub done <id> --rev <n> --summary "..."`。
-- 拿到 `409 REVISION_CONFLICT` = 有人先改了 → **重新读再操作**。
+## 9. 与 AI agent 协作（DSH Agent Teams）
+- 任务走共享任务板（`team_task_create` / `list` / `update`），领任务时声明 `write_scopes`；跨 agent 同一文件是**软警告不是锁**，所以 §3 的"一个 owner"规则必须人工守。
+- 汇报必须带三样：改了什么 / **验证命令 + 真实输出** / 剩余风险。禁止只写"已完成"。
+- 关键结论要写进文件（docs 或 issue），不要只留在对话里 —— 对话不落盘就等于没发生。
+- 同一问题失败 2 次就停下来报告，不要空转。
 
-**任务粒度**：一个任务 = 一个人 0.5~2 天能完成的、可独立验证的成果。太大就拆，太小就合并。
+## 10. 停止条件
+- `node tools/smoke.js` 不过且 30 分钟内定位不到原因 → 停下来，贴完整输出求助。
+- 需要改 `data/*.js` 的数值才能让测试过 → 停，那是口径变更，必须走 §5 全表。
+- 连续两个动作方向相反（改了又改回去）→ 停，先确认需求。
 
----
-
-## 7. Git 协作
-
-- 分支：`feat/huang`（长期复用，不要每个任务新建分支）
-- 提交信息：`type(scope): 摘要 (Txxxx)`，type ∈ `feat` / `fix` / `refactor` / `test` / `docs` / `chore`
-- 提交前必须能跑通项目测试命令（见第 10 节）
-- 冲突原则：**自己 scope 内的冲突自己解**；跨 scope 冲突找 lead 裁决
-- 合并：**只有 lead** 把 `feat/*` 合进 `main`；member 不要 `merge main`，需要新代码就 `git rebase origin/main`
-- 每个 PR 描述要写：任务号、改了什么、怎么验证、有风险的地方
-
----
-
-## 8. 求助与停止条件
-
-- 同一问题失败 **2 次** → 停下来发 `blocker`，别试第 3 次
-- 需要改自己 scope 外的文件 → 发 `question`
-- 连续 3 轮（约 30 分钟）没进展 → 主动上报，不要空转
-- 收到 lead 的 `decision` → 无条件按新决定执行；有异议**先执行再提问**
-- 收到 `review` 意见 → 当轮改完，不要攒着
-
----
-
-## 9. 命令速查
-
+## 11. 开工前 30 秒自检（复制即用）
 ```bash
-hub health                                     # 服务是否活着
-hub whoami                                     # 我是谁（身份自检）
-hub agents                                     # 成员列表与最后在线
-hub inbox                                      # 收消息（自动推进游标）
-hub inbox --wait 25                            # 长轮询：有消息立刻返回
-hub send --to huang --kind status --body "..."  # 发消息
-hub tasks                                      # 任务列表
-hub tasks --status pending                     # 只看待领
-hub task Txxxx                                 # 任务详情（看 revision）
-hub new-task --title "..." --desc "..." --scope "src/backend/"
-hub claim Txxxx --rev 1
-hub block Txxxx --rev 2 --by Tyyyy
-hub done  Txxxx --rev 2 --summary "..."
+git rev-parse --abbrev-ref HEAD     # 在 main（或约定的 feat 分支）
+git status --porcelain              # 只含预期改动；data/ 不该莫名变脏
+node tools/smoke.js                 # 全绿、退出码 0
 ```
-
-> 网络不稳时：`send` 带 `client_id` 幂等，重试不会产生重复消息。
-
----
-
-## 10. 项目约定（lead 维护）
-
-> **过渡期约定（技术栈未定前，先按这段执行）**
->
-> - 所有代码一律放在 `src/` 下；**新增一级目录必须有 lead 的 `decision` 广播**，不许自建
-> - 测试命令暂定 `pytest -q`；最终若不用 Python，由 lead 在定栈当天更新本节并广播 `decision`
-> - 技术栈定稿前**不写业务代码**，只做三件事：文档、目录骨架、流程演练
-> - 范围与需求以 `docs/PROJECT-SCOPE.md` 为准，改需求先改那里
-
-- **技术栈**：`<待填：例如 Python 3.11 + FastAPI + React>`
-- **目录结构**：
-
-```
-<待填，例如>
-src/
-  backend/     jiang
-  frontend/    xu
-  core/        li
-tests/         li
-docs/          huang
-```
-
-- **测试命令**：`pytest -q`
-  - 全员一致；提交前必须本地跑通
-  - 跑不通就别 push，先发 `blocker`
-- **代码风格**：`<待填：例如 black + ruff / prettier + eslint>`
-- **接口先行**：跨模块接口由 lead 在 `docs/API.md` 定义并广播 `decision`；接口变了必须立刻广播，否则别人会按旧接口写
-- **数据/配置**：不进仓库的敏感文件列在 `.gitignore`；示例配置放 `config/*.example`
-
----
-
-## 11. 开工前 60 秒自检
-
-```bash
-hub health          # 1. relay 活着
-hub whoami          # 2. 身份对（id 与本文第 1 节一致）
-git branch          # 3. 在 feat/huang 上，不在 main 上
-git status          # 4. 没有意外改动
-hub inbox           # 5. 没有漏读的指令
-```
-
-五项都正常再动手。任何一项异常，先解决再干活。
