@@ -358,6 +358,8 @@ footer p { margin: 0; }
 .lg-water { background: rgba(116, 172, 203, 0.6); border: 1px solid rgba(78, 138, 172, 0.8); }
 /* 建筑高度色阶：右端必须落在实际能画出的最深色（全库最高楼 57.6 m -> #7a7c80） */
 .lg-bld { background: linear-gradient(135deg, #b0b2b6 0%, #9a9ca1 45%, var(--bld-max) 100%); border: 1px solid rgba(70, 80, 95, 0.55); }
+/* 树：一圈绿色圆点，和画布的树冠符号同色系 */
+.lg-tree { background: radial-gradient(circle at 34% 30%, #86a87a 0 42%, #5f8a5c 43% 100%); border-radius: 50%; border: 1px solid rgba(60, 90, 58, 0.5); }
 
 #compass {
   position: absolute;

@@ -139,8 +139,13 @@ window.ISO = (function () {
       Math.round(Math.min(255, Math.max(0, bl))) + ')';
   }
 
+  /* 一棵"最小可辨识"的树在屏幕上的半径（CSS px）。1200 m 跨度、0.34 px/m 的比例下，
+     真实 4 m 树冠只有 1.4 px，照实画就是一堆灰点 —— 所以给个符号下限，让它读得出是树。 */
+  var TREE_MIN_PX = 2.6;
+  var LEAF = [104, 146, 96];   // 树叶底色（和米黄地面、灰楼都拉开）
+
   /* 一帧要画的全部楼面：按深度从远到近排好，map.js 只负责照着画 */
-  function scene(buildings, iso, sun) {
+  function scene(buildings, iso, sun, trees) {
     var list = buildings || [];
     var az = num(sun && sun[0], 180) * DEG;
     var elev = num(sun && sun[1], 45);
@@ -193,8 +198,51 @@ window.ISO = (function () {
       items.push({ h: h, depth: sumY / pts.length, faces: faces });
     }
 
+    // ---- 树：和楼进同一个列表一起排序，近处的树才会盖住远处的楼 ----
+    var tl = trees || [];
+    var sunUp = clamp01(elev / 90);
+    for (var ti = 0; ti < tl.length; ti++) {
+      var t = tl[ti];
+      if (!t) { continue; }
+      var rEff = Math.max(num(t.r, 4), TREE_MIN_PX / iso.scale);
+      var hh = num(t.h, 8), tone = clamp01(num(t.tone, 0.5));
+      var b0 = iso.project(t.x, t.y, 0);
+      var bTop = iso.project(t.x, t.y, hh * 0.42);
+      var halfW = Math.max(0.6, 0.5 * iso.scale);
+      var k = 0.74 + 0.30 * tone + 0.10 * sunUp;     // 每棵树深浅不同，整片叶子随太阳高度提亮
+      var tfaces = [
+        {
+          kind: 'trunk',
+          fill: 'rgb(96,78,60)',
+          pts: [[b0[0] - halfW, b0[1]], [b0[0] + halfW, b0[1]],
+            [bTop[0] + halfW * 0.8, bTop[1]], [bTop[0] - halfW * 0.8, bTop[1]]]
+        },
+        { kind: 'tree', fill: rgbScale(LEAF, k), pts: ellipsePts(t.x, t.y, rEff, hh, iso, 14, 0, 0) },
+        { kind: 'treeLit', fill: rgbScale(LEAF, k + 0.34), pts: ellipsePts(t.x, t.y, rEff * 0.5, hh, iso, 12, sunE * rEff * 0.22, sunN * rEff * 0.22) }
+      ];
+      items.push({ h: hh, depth: b0[1], faces: tfaces });
+    }
+
     items.sort(function (a, b) { return a.depth - b.depth; });
     return items;
+  }
+
+  /* 地平面上的圆盘，按投影摊成椭圆（地面被压扁，圆也跟着扁）。
+     顺序：树冠阴影面 -> 受光面，靠 order 保证后者压在前者上面。 */
+  function ellipsePts(cx, cy, r, z, iso, seg, ox, oy) {
+    var pts = [];
+    for (var i = 0; i < seg; i++) {
+      var th = i / seg * Math.PI * 2;
+      pts.push(iso.project(cx + ox + Math.cos(th) * r, cy + oy + Math.sin(th) * r, z));
+    }
+    return pts;
+  }
+
+  function rgbScale(base, k) {
+    var r = Math.round(Math.min(255, Math.max(0, base[0] * k)));
+    var g = Math.round(Math.min(255, Math.max(0, base[1] * k)));
+    var b = Math.round(Math.min(255, Math.max(0, base[2] * k)));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
   return {

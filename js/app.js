@@ -156,6 +156,24 @@ window.APP = (function () {
     return { fastest: null, cool: null, live: true, msg: state.routeMsg };
   }
 
+  /* ---------- 树：只生成一次（固定种子，确定性），之后每帧复用 ---------- */
+  function treeList() {
+    if (state.trees) { return state.trees; }
+    if (!window.TREES || !window.TREES.generate) { state.trees = []; return state.trees; }
+    try {
+      state.trees = window.TREES.generate({
+        buildings: BUILDINGS,
+        roads: (BASEMAP && BASEMAP.roads) || [],
+        water: (BASEMAP && BASEMAP.water) || [],
+        campusRing: (META.campus && META.campus.ring) || null
+      }) || [];
+    } catch (e) {
+      // 树是装饰层：生成失败也不能把整张图带崩
+      state.trees = [];
+    }
+    return state.trees;
+  }
+
   /* ---------- 渲染一帧 ---------- */
   function render() {
     var i = state.frame;
@@ -177,7 +195,8 @@ window.APP = (function () {
       fromXY: cur.fromXY || null,
       toXY: cur.toXY || null,
       campusRing: (META.campus && META.campus.ring) || null,
-      basemap: BASEMAP
+      basemap: BASEMAP,
+      trees: treeList()
     });
 
     // ---- 顶部时间与太阳 ----

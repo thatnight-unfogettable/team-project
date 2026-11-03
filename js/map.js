@@ -120,10 +120,10 @@ window.MAP = (function () {
 
   /* 立体视图的楼：把每栋拔成"顶面 + 朝向观察者的侧面"，从远到近画。
      几何（投影、可见面、受光、排序）全在 js/iso.js，这里只管照着画。 */
-  function drawBuildingsIso(buildings) {
+  function drawBuildingsIso(buildings, trees) {
     if (!window.ISO || !state.isoProj) { drawBuildings(buildings); return; }
     var ctx = state.ctx, dpr = state.dpr;
-    var items = window.ISO.scene(buildings, state.isoProj, state.sun);
+    var items = window.ISO.scene(buildings, state.isoProj, state.sun, trees);
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.lineJoin = 'round';
@@ -145,6 +145,52 @@ window.MAP = (function () {
           ctx.stroke();
         }
       }
+    }
+    ctx.restore();
+  }
+
+  /* ---------- 树（纯观感层，不参与阴影/晒度计算） ----------
+     位置由 js/trees.js 用固定种子生成；这里只负责画。
+     1200 m 跨度下 4 m 树冠只有 1.8 px，所以给一个屏幕最小半径，让它读得出是树。 */
+  var TREE_SYM_MIN = 3.0;
+  var LEAF_RGB = [104, 146, 96];
+
+  function leafRgb(k) {
+    var f = function (v) { return Math.round(Math.min(255, Math.max(0, v * k))); };
+    return 'rgb(' + f(LEAF_RGB[0]) + ',' + f(LEAF_RGB[1]) + ',' + f(LEAF_RGB[2]) + ')';
+  }
+
+  function drawTrees(trees) {
+    if (!trees || !trees.length) { return; }
+    var ctx = state.ctx, view = activeView();
+    if (!view || !view.scale) { return; }
+    var az = (state.sun && state.sun[0] !== undefined) ? state.sun[0] : 180;
+    var el = (state.sun && state.sun[1] !== undefined) ? state.sun[1] : 45;
+    var sunE = Math.sin(az * Math.PI / 180), sunN = Math.cos(az * Math.PI / 180);
+    var sunUp = Math.max(0, Math.min(1, el / 90));
+
+    ctx.save();
+    setLayerTransform(ctx);
+    // trees 已按 y 排好序：先北后南，南边的树压在北上，俯视图才有层次
+    for (var i = 0; i < trees.length; i++) {
+      var t = trees[i];
+      if (!t) { continue; }
+      var cx = view.x(t.x), cy = view.y(t.y);
+      var r = Math.max(t.r * view.scale, TREE_SYM_MIN);
+      var k = 0.74 + 0.30 * (t.tone === undefined ? 0.5 : t.tone) + 0.10 * sunUp;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = leafRgb(k);
+      ctx.fill();
+      // 细边：3 px 的圆没有轮廓就是一坨糊点，描一圈立刻能数清"这是一棵棵树"
+      ctx.strokeStyle = 'rgba(58,86,56,0.45)';
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // 朝太阳那一侧的受光面
+      ctx.beginPath();
+      ctx.arc(cx + sunE * r * 0.26, cy - sunN * r * 0.26, r * 0.55, 0, Math.PI * 2);
+      ctx.fillStyle = leafRgb(k + 0.34);
+      ctx.fill();
     }
     ctx.restore();
   }
@@ -485,8 +531,10 @@ window.MAP = (function () {
 
     drawShadows(payload.shadows);
     if (state.iso && state.isoProj) {
-      drawBuildingsIso(payload.buildings || []);
+      drawBuildingsIso(payload.buildings || [], payload.trees || []);
     } else {
+      // 平面视图：树在楼之前画（楼会盖住贴着它的树冠），但在阴影之后（影子落在树上是对的）
+      drawTrees(payload.trees);
       drawBuildings(payload.buildings || []);
     }
     drawCampus(payload.campusRing);
