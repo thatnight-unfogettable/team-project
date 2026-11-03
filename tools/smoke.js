@@ -840,6 +840,10 @@ if (!jsLoadErr && !initErr) {
     ok('按 V 键能切回平面视图', W.MAP.isIso() === false && planBtn.getAttribute('aria-pressed') === 'true');
     ok('切回平面后指北针复位', registry['compass-needle'].style.transform === 'rotate(0.0deg)',
       registry['compass-needle'].style.transform);
+
+    ok('深链接 #iso 能直开立体视图（其余 hash 一律平面）',
+      CORE.wantsIsoView('#iso') === true && CORE.wantsIsoView('#ISO') === true &&
+      CORE.wantsIsoView('') === false && CORE.wantsIsoView('#plan') === false);
   }
 
   var dial = registry['sun-dial'];
