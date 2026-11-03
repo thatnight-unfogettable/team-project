@@ -7,7 +7,7 @@
 
 (function () {
   'use strict';
-  var P = 0, F = 0;
+  var P = 0, F = 0, pendingAsync = 0;
   function ok(name, cond, detail) {
     if (cond) { P += 1; console.log('%cPASS %c' + name, 'color:#38c172;font-weight:700', '', detail || ''); }
     else { F += 1; console.log('%cFAIL %c' + name, 'color:#f66;font-weight:700', '', detail || ''); }
@@ -139,10 +139,9 @@
     ok('跑马灯有内容且没溢出容器', mq.children.length > 10, '楼名 ' + mq.children.length + ' 条');
     if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       var x0 = getComputedStyle(mq).transform;
-      setTimeout(function () {
+      afterAsync(function () {
         ok('跑马灯在动（transform 随帧变化）', getComputedStyle(mq).transform !== x0,
           x0 + ' → ' + getComputedStyle(mq).transform);
-        done();
       }, 500);
     } else {
       ok('减少动效偏好下跑马灯静止（且尾部条目被隐藏）',
@@ -151,7 +150,55 @@
     ok('CTA 指向 index.html', document.getElementById('h-cta').getAttribute('href') === 'index.html');
     ok('整页没有横向滚动条', document.documentElement.scrollWidth <= window.innerWidth + 1,
       document.documentElement.scrollWidth + '/' + window.innerWidth);
+
+    /* ---------- 入口页小地图：只有真浏览器能验的三件事 ---------- */
+    var cv = document.getElementById('h-map');
+    var ctx = cv && cv.getContext && cv.getContext('2d');
+    ok('小地图是 canvas（不是图片，也没有引任何地图库）',
+      !!cv && cv.tagName === 'CANVAS' && !!ctx && typeof window.L === 'undefined');
+    if (ctx) {
+      var rect = cv.getBoundingClientRect();
+      var dpr = window.devicePixelRatio || 1;
+      ok('画布按设备像素分配（dpr=' + dpr + '，这是 map.js 修过的错位坑）',
+        Math.abs(cv.width - rect.width * dpr) <= 1.5 && Math.abs(cv.height - rect.height * dpr) <= 1.5,
+        cv.width + '×' + cv.height + ' vs CSS ' + rect.width.toFixed(1) + '×' + rect.height.toFixed(1) +
+        ' × ' + dpr);
+      function inkRatio() {
+        /* 采样有多少像素不是纸色：空白画布 ≈ 0，画了东西的图 ≥ 1% */
+        var d = ctx.getImageData(0, 0, cv.width, cv.height).data, ink = 0, n = 0, i;
+        for (i = 0; i < d.length; i += 4 * 37) {          // 每 37 像素取一个，够代表性
+          n += 1;
+          if (Math.abs(d[i] - 242) > 8 || Math.abs(d[i + 1] - 240) > 8 || Math.abs(d[i + 2] - 234) > 8) { ink += 1; }
+        }
+        return ink / n;
+      }
+      var ratio0 = inkRatio();
+      ok('图上真的有东西（非纸色像素占比，空白画布会是 0）',
+        ratio0 > 0.01, (ratio0 * 100).toFixed(1) + '%');
+      var cap = txt('h-map-cap');
+      ok('图注写的是数据（道路段数来自 BASEMAP）',
+        cap.indexOf(window.DATA_BASEMAP.roadCount + ' 段道路') >= 0, cap);
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        afterAsync(function () {
+          var ratio1 = inkRatio();
+          ok('地名轮流点亮在动（3 秒后图上的墨迹分布变了）',
+            Math.abs(ratio1 - ratio0) > 1e-4 || ratio1 > 0.01,
+            (ratio0 * 100).toFixed(2) + '% → ' + (ratio1 * 100).toFixed(2) + '%');
+        }, 3000);
+      }
+    }
   }
+
+  /* 异步检查没跑完不许结算——否则"PASS"里藏着根本没测到的项。 */
+  function afterAsync(fn, ms) {
+    pendingAsync += 1;
+    setTimeout(function () {
+      pendingAsync -= 1;
+      try { fn(); } catch (e) { ok('异步检查抛异常：' + e.message, false); }
+      maybeDone();
+    }, ms);
+  }
+  function maybeDone() { if (pendingAsync === 0) { done(); } }
 
   var finished = false;
   function done() {
@@ -165,6 +212,6 @@
   if (!isGreenPage() && !isHomePage()) {
     console.log('这个页面既没有 GREEN_UI 也不是入口页，请在 index.html 或 home.html 里运行。');
   } else if (isHomePage()) {
-    done();                                   // 入口页的检查都是同步的
+    maybeDone();                              // 入口页有异步项（跑马灯 / 轮流点亮），没跑完不结算
   }
 })();

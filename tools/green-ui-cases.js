@@ -20,6 +20,24 @@ var GREEN_FILES = ['data/green-factors.js', 'js/green-core.js', 'content/strings
 var SNAPSHOT_IDS = ['fast-len', 'cool-len', 'fast-min', 'cool-min', 'fast-sun', 'cool-sun',
   'fast-shade', 'cool-shade', 'delta', 'route-tag', 'time-label', 'sun-elev', 'pick-hint'];
 
+/* 页面到底加载哪几个脚本，以 HTML 为准。测试里另抄一份清单的话，
+   清单和页面一脱节，测的就是想象中的页面——这类测试最容易全绿而页面是坏的。 */
+function scriptsOf(read, page) {
+  var html = read(page), out = [], re = /<script src="([^"]+\.js)"><\/script>/g, m;
+  while ((m = re.exec(html)) !== null) { out.push(m[1]); }
+  return out;
+}
+/* 从源码里抠出道路分档样式的字面值，用来比对两页是否同一套口径 */
+function tierBodies(src) {
+  var out = {}, re = /(main|local|service|path):\s*\{([^{}]*)\}/g, m;
+  while ((m = re.exec(src)) !== null) {
+    if (out[m[1]] === undefined) { out[m[1]] = m[2].replace(/\s+/g, ''); }
+  }
+  return out;
+}
+function minus(list, drop) {
+  return list.filter(function (f) { return drop.indexOf(f) < 0; });
+}
 function withGreen() {
   return SITE_FILES.concat(GREEN_FILES.slice(0, 4)).concat(APP_FILES).concat(GREEN_FILES.slice(4));
 }
@@ -86,13 +104,21 @@ function findControl(W, rootId, pred) {
 function run(ctx) {
   var ok = ctx.ok, read = ctx.read, ROOT = ctx.ROOT;
 
-  var base = stubmod.build({ root: ROOT, html: 'index.html', files: SITE_FILES.concat(APP_FILES) });
+  var PAGE_INDEX = scriptsOf(read, 'index.html');
+  var PAGE_HOME = scriptsOf(read, 'home.html');
+  var BASE_FILES = minus(PAGE_INDEX, GREEN_FILES);
+  ok('测试沙箱的脚本清单与 index.html 一字不差（' + PAGE_INDEX.length + ' 个）',
+    PAGE_INDEX.length === SITE_FILES.length + APP_FILES.length + GREEN_FILES.length &&
+    minus(PAGE_INDEX, SITE_FILES.concat(APP_FILES).concat(GREEN_FILES)).length === 0,
+    PAGE_INDEX.join(' '));
+
+  var base = stubmod.build({ root: ROOT, html: 'index.html', files: BASE_FILES });
   base.fireReady();
   base.W.APP.redraw();
   var baseSnap = snapshot(base.W);
 
   /* ---------- A. 面板建立 ---------- */
-  var g = stubmod.build({ root: ROOT, html: 'index.html', files: withGreen() });
+  var g = stubmod.build({ root: ROOT, html: 'index.html', files: PAGE_INDEX });
   var buildErr = null;
   try { g.fireReady(); } catch (e) { buildErr = e; }
   ok('注入绿色模块后 DOMContentLoaded 不抛异常', !buildErr, buildErr ? buildErr.message : '');
@@ -281,13 +307,13 @@ function run(ctx) {
     srcText.indexOf('Compendium') >= 0 || srcText.indexOf('未能在线核对') >= 0);
 
   /* ---------- F. 降级路径 ---------- */
-  var noStore = stubmod.build({ root: ROOT, html: 'index.html', localStorage: false, files: withGreen() });
+  var noStore = stubmod.build({ root: ROOT, html: 'index.html', localStorage: false, files: PAGE_INDEX });
   var noStoreErr = null;
   try { noStore.fireReady(); } catch (e) { noStoreErr = e; }
   ok('localStorage 不可用时不崩（file:// 或隐私模式）', !noStoreErr, noStoreErr ? noStoreErr.message : '');
   ok('不可用时面板照样建起来', !!noStore.REG['green-block']);
 
-  var noMO = stubmod.build({ root: ROOT, html: 'index.html', mutationObserver: false, files: withGreen() });
+  var noMO = stubmod.build({ root: ROOT, html: 'index.html', mutationObserver: false, files: PAGE_INDEX });
   var noMOErr = null;
   try { noMO.fireReady(); } catch (e) { noMOErr = e; }
   ok('没有 MutationObserver 的老环境也能建面板（退回轮询）',
@@ -305,7 +331,7 @@ function run(ctx) {
   try { noMO.W.GREEN_UI.dispose(); noMO.W.APP.redraw(); } catch (e) { disposeErr = e; }
   ok('dispose() 后不留半截状态，页面照常重绘', !disposeErr, disposeErr ? disposeErr.message : '');
 
-  var motionOn = stubmod.build({ root: ROOT, html: 'index.html', reducedMotion: false, files: withGreen() });
+  var motionOn = stubmod.build({ root: ROOT, html: 'index.html', reducedMotion: false, files: PAGE_INDEX });
   var motionErr = null;
   try { motionOn.fireReady(); } catch (e) { motionErr = e; }
   var expMotion = expectFor(motionOn.W, 'fast', 'walk', 'car_avg', 1);
@@ -316,11 +342,9 @@ function run(ctx) {
     motionOn.W.tickers.raf > 0, 'raf=' + motionOn.W.tickers.raf);
 
   /* ---------- G. 入口页 ---------- */
-  var HOME_FILES = ['data/meta.js', 'data/routes.js', 'data/basemap.js', 'data/green-factors.js',
-    'js/core.js', 'js/green-core.js', 'js/textfx.js', 'content/strings-green.js', 'js/home.js'];
   var h = null, homeErr = null;
   try {
-    h = stubmod.build({ root: ROOT, html: 'home.html', files: HOME_FILES, header: false });
+    h = stubmod.build({ root: ROOT, html: 'home.html', files: PAGE_HOME });
     h.fireReady();
   } catch (e) { homeErr = e; }
   ok('入口页脚本链跑完 boot() 不抛异常', !homeErr,
@@ -329,8 +353,8 @@ function run(ctx) {
     var HW = h.W, M = HW.DATA_META, R = HW.DATA_ROUTES;
     var idx = HW.CORE.pickFrameIndex(M.frames, '14:00');
     var r14 = R.frames[idx].routes[0];
-    ok('入口页没有创建 canvas，也没监听 window（纯文字入口）',
-      !h.REG['map'] && (HW.__winListeners || []).length === 0,
+    ok('入口页不搬工具页那套地图（没有 #map），window 上只监听 resize 用来重画缩略图',
+      !h.REG['map'] && (HW.__winListeners || []).join(',') === 'resize',
       'winListeners=' + (HW.__winListeners || []).join(','));
     ok('标题解码完成后是站名（没有乱码残留）',
       txt(h.W, 'h-title') === '凉径 · ShadeRoute Lite', txt(h.W, 'h-title'));
@@ -412,6 +436,135 @@ function run(ctx) {
       txt(h.W, 's-save-note').indexOf(R.pairs[0].name) >= 0, txt(h.W, 's-save-note'));
   }
 
+  /* ---------- G2. 入口页小地图：现场用 canvas 画的，不是图片 ---------- */
+  if (h && !homeErr) {
+    var HW2 = h.W, cv = h.REG['h-map'], mc = cv && cv._c;
+    var B2 = HW2.DATA_BASEMAP, M2 = HW2.DATA_META, R2 = HW2.DATA_ROUTES;
+    function hasText(re) {
+      return !!mc && mc.texts.some(function (t) { return re.test(t.n); });
+    }
+    ok('小地图真的画了（stroke 次数 >= 道路段数，说明 296 段都过了笔）',
+      !!mc && mc.count.stroke >= B2.roads.length,
+      mc ? ('stroke=' + mc.count.stroke + ' roads=' + B2.roads.length) : '没有 canvas 上下文');
+    /* 落笔外接框分两层看：
+       - 道路/水面允许超出画布一点：底图本来就按 bbox±60 m 外扩，超出部分被画布裁掉是对的
+         （60 m × 当前 scale ≈ 33 px，留 40 px 容差）；
+       - 但**地名和校园边界必须完整在画布内**，被裁掉就没意义了。 */
+    function penInside(cvNode, tol) {
+      var b = cvNode && cvNode._c ? cvNode._c.bounds : null;
+      var r = cvNode.getBoundingClientRect();
+      return {
+        ok: !!b && isFinite(b.minX) && b.minX >= -tol && b.minY >= -tol &&
+          b.maxX <= r.width + tol && b.maxY <= r.height + tol,
+        box: b ? [b.minX.toFixed(1), b.minY.toFixed(1), b.maxX.toFixed(1), b.maxY.toFixed(1)].join(' / ') : '(没画)',
+        r: r
+      };
+    }
+    var miniPen = penInside(cv, 40);
+    ok('入口页落笔只在画布外 40 px 内（底图外扩被裁掉是设计如此）', miniPen.ok, miniPen.box);
+    var toolPen = penInside(g.REG['map'], 40);
+    ok('工具页落笔同样没有飞出去（第一轮修的就是错位标注）', toolPen.ok, toolPen.box);
+    (function () {
+      var v2 = HW2.CORE.fitTransform(M2.bbox_m, miniPen.r.width, miniPen.r.height, 16);
+      var out = [];
+      (M2.campus.ring || []).forEach(function (p, i) {
+        var x = v2.x(p[0]), y = v2.y(p[1]);
+        if (x < 0 || y < 0 || x > miniPen.r.width || y > miniPen.r.height) { out.push('ring#' + i); }
+      });
+      B2.labels.slice(0, 10).forEach(function (L, i) {
+        var x = v2.x(L.x), y = v2.y(L.y);
+        if (x < 12 || y < 12 || x > miniPen.r.width - 12 || y > miniPen.r.height - 12) {
+          out.push('label#' + i + ' ' + L.n);
+        }
+      });
+      ok('114 个边界顶点与点出的 10 个地名全部落在画布内（一个都不被裁）',
+        out.length === 0, out.join(', '));
+    })();
+    ok('画布上每个地名都带白描边（strokeText 与 fillText 次数相等）',
+      !!mc && mc.count.strokeText === mc.count.fillText && mc.count.fillText >= 12,
+      mc ? ('fill=' + mc.count.fillText + ' halo=' + mc.count.strokeText) : '');
+    ok('画布上画了 100 m 比例尺', hasText(/^100 m$/));
+    var azIdx = HW2.CORE.pickFrameIndex(M2.frames, '14:00');
+    var sunAz = M2.frames[azIdx].sun[0];
+    ok('罗盘写的方位角就是那一帧的数据（' + sunAz.toFixed(1) + '°）',
+      hasText(new RegExp('^日 ' + sunAz.toFixed(1) + '')), sunAz.toFixed(1));
+    var pair0 = R2.pairs[0];
+    var pa = HW2.PROJ.toXY(pair0.from[0], pair0.from[1]);
+    var pb = HW2.PROJ.toXY(pair0.to[0], pair0.to[1]);
+    var straight = Math.round(Math.sqrt((pa[0] - pb[0]) * (pa[0] - pb[0]) + (pa[1] - pb[1]) * (pa[1] - pb[1])));
+    /* haloText 先描边再填字，桩里同一条文字留两条记录；只取填字那条。
+       且描边那条长度不同（长度只出现在填字调用里），断言按"恰好一条"来卡重复绘制。 */
+    var straightTexts = (mc ? mc.texts : []).filter(function (t) {
+      return !t.halo && t.n.indexOf('直线 ') === 0;
+    });
+    ok('两点之间明确写"直线"，数字与独立用 PROJ 算出来的一致（不冒充路线长度）',
+      straightTexts.length === 1 &&
+      Number(String(straightTexts[0].n).replace(/[^\d.]/g, '')) === straight,
+      '期望 ' + straight + ' m，画布写 ' + (straightTexts[0] ? straightTexts[0].n : '(没有)'));
+    ok('起终点名称来自 ROUTES.pairs 并画在图上', hasText(/^起 /) && hasText(/^终 /));
+    var capTxt = txt(h.W, 'h-map-cap');
+    var noteTxt = txt(h.W, 'h-map-note');
+    ok('图注的段数/水面数/标注数全部来自底图数据',
+      capTxt.indexOf(B2.roadCount + ' 段道路') >= 0 &&
+      capTxt.indexOf(B2.waterCount + ' 处水面') >= 0 &&
+      capTxt.indexOf(B2.labels.length + ' 个标注') >= 0, capTxt);
+    ok('说明按数据说话：只有 BASEMAP.approxWater 为真才写"示意轮廓"',
+      (noteTxt.indexOf('示意轮廓') >= 0) === !!B2.approxWater, noteTxt.slice(0, 70));
+    ok('说明里点明虚线只是两点的直线参考，不代表路线长度',
+      noteTxt.indexOf('不代表路线长度') >= 0, noteTxt.slice(-40));
+
+    /* 口径不能两份各自漂移：小地图的道路样式必须和 js/map.js 的字面值逐字一致 */
+    var homeSrc = read('js/home.js'), mapSrc = read('js/map.js');
+    var hb = tierBodies(homeSrc), mb = tierBodies(mapSrc);
+    ['main', 'local', 'service', 'path'].forEach(function (k) {
+      ok('小地图道路样式 ' + k + ' 与 js/map.js 的 ROAD_STYLE 逐字一致',
+        !!hb[k] && hb[k] === mb[k], hb[k] + ' vs ' + mb[k]);
+    });
+    ok('分档绘制次序与 map.js 相同（path 先、main 后，两遍）',
+      homeSrc.indexOf("['path', 'service', 'local', 'main']") >= 0 &&
+      mapSrc.indexOf("['path', 'service', 'local', 'main']") >= 0);
+    ok('approx 水面画虚线这条规则两页同源',
+      homeSrc.indexOf('[6, 4]') >= 0 && mapSrc.indexOf('[6, 4]') >= 0);
+    ok('校园边界虚线规格与 map.js 一致',
+      homeSrc.indexOf('[10, 6]') >= 0 && mapSrc.indexOf('[10, 6]') >= 0);
+
+    /* dpr：入口页不能重犯 map.js 修过的那个错位坑 */
+    var hDpr = stubmod.build({ root: ROOT, html: 'home.html', files: PAGE_HOME, dpr: 2 });
+    hDpr.fireReady();
+    var cv2 = hDpr.REG['h-map'], mc2 = cv2 && cv2._c;
+    ok('dpr=2 时画布按设备像素分配',
+      cv2.width === 2400 && cv2.height === 1600, cv2.width + '×' + cv2.height);
+    ok('dpr=2 时上下文套了 dpr 变换（文字落位 = CSS 坐标 × 2）',
+      mc2.getTransform().slice(0, 5).join(',') === '2,0,0,2,0', mc2.getTransform().join(','));
+    ok('dpr=2 时字号没被减半（与 dpr=1 用同一串 font）',
+      !!mc2.texts.length && !!mc.texts.length && mc2.texts[0].font === mc.texts[0].font,
+      (mc2.texts[0] || {}).font + ' vs ' + (mc.texts[0] || {}).font);
+
+    /* 轮流点亮只在允许动效时开 */
+    ok('减少动效偏好下不注册轮询定时器（图是静态的）',
+      h.W.__timers.interval === 0, 'interval=' + h.W.__timers.interval);
+    var hMotion = stubmod.build({ root: ROOT, html: 'home.html', files: PAGE_HOME, reducedMotion: false });
+    /* 入口页本来就有多处定时器（解码、轮播、可见性），所以这里不比总数，
+       而是比"地图多注册了几个"：在脚本加载前就把 canvas 摘掉再跑一遍，差值必须恰好是 1。 */
+    var hNoMap = stubmod.build({
+      root: ROOT, html: 'home.html', files: PAGE_HOME, reducedMotion: false,
+      preload: function (doc, REG) {
+        var cv = REG['h-map'];
+        if (cv && cv.parentNode) { cv.parentNode.removeChild(cv); }
+      }
+    });
+    ok('地名轮流点亮恰好注册 1 个定时器（不多注册第二个，也不吃掉别的）',
+      hMotion.W.__timers.interval === hNoMap.W.__timers.interval + 1,
+      '有图=' + hMotion.W.__timers.interval + ' 无图=' + hNoMap.W.__timers.interval);
+    ok('没有 canvas 的环境里入口页不崩，图注改成人话说明，其它数字照旧',
+      txt(hNoMap.W, 'h-map-cap').indexOf('不支持 canvas') >= 0 &&
+      /\d/.test(txt(hNoMap.W, 's-save')) && /\d/.test(txt(hNoMap.W, 'g-co2')),
+      txt(hNoMap.W, 'h-map-cap').slice(0, 26) + ' / ' + txt(hNoMap.W, 's-save') + ' / ' + txt(hNoMap.W, 'g-co2'));
+    ok('缩略图仍然不加载重数据（meta+basemap 就够，不背 shadows/graph/buildings/map.js）',
+      ['data/shadows.js', 'data/graph.js', 'data/buildings.js', 'js/map.js']
+        .every(function (x) { return PAGE_HOME.indexOf(x) < 0; }), PAGE_HOME.join(' '));
+  }
+
   /* ---------- H. 页面骨架本身 ---------- */
   ok('index.html 的 id 在桩上齐备（面板依赖的都在）',
     ['card-fast', 'card-cool', 'fast-len', 'cool-len', 'delta', 'panel', 'route-tag']
@@ -420,9 +573,9 @@ function run(ctx) {
       .filter(function (id) { return !base.REG[id]; }).join(','));
   ok('home.html 的 id 齐备（js/home.js 要填的都在）',
     ['h-title', 'h-slogan', 's-save', 's-extra', 's-shade', 's-sun', 'g-co2', 'g-kcal', 'g-steps',
-      'g-year', 'h-mq', 'h-rot', 'h-date', 'h-campus', 'h-green', 'h-cta']
+      'g-year', 'h-mq', 'h-rot', 'h-date', 'h-campus', 'h-green', 'h-cta', 'h-map', 'h-map-cap', 'h-map-note']
       .every(function (id) { return !!h.REG[id]; }),
-    ['h-title', 's-save', 'g-co2', 'h-mq', 'h-green', 'h-cta']
+    ['h-title', 's-save', 'g-co2', 'h-mq', 'h-green', 'h-cta', 'h-map', 'h-map-cap']
       .filter(function (id) { return !h.REG[id]; }).join(','));
   ok('两个页面各自只引自己需要的脚本（入口页不载 app.js，工具页不载 home.js）',
     read('home.html').indexOf('js/app.js') < 0 && read('index.html').indexOf('js/home.js') < 0);

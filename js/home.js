@@ -75,7 +75,267 @@
     });
   }
 
-  /* ---------- 3. 动效编排 ---------- */
+  /* ---------- 3. 入口页小地图：现场用 canvas 画，不加载 map.js、不用任何图片 ---------- */
+  /* 道路的颜色、虚线规则与分档绘制次序都照 js/map.js 的 ROAD_STYLE / drawRoads：
+       - 先铺所有描边再铺所有路面（否则后画的描边会盖住前一条路的路面，路口看着像断了）
+       - approx 水面用虚线边
+     线宽按缩放比例收窄（缩略图若直接用原来的 5 px，主路会糊成一片）。
+     两份常量由 tools/green-ui-cases.js 逐值比对 map.js 源码，防止各自漂移。
+     图上写出来的每个数字（道路段数、水面数、标注数、太阳方位、直线距离）都来自数据本身。 */
+  var MINI_ROAD_STYLE = {
+    main: { casing: 7.0, fill: 5.0, casingColor: 'rgba(146,139,120,0.55)', fillColor: '#fffdf4' },
+    local: { casing: 4.6, fill: 3.0, casingColor: 'rgba(152,145,128,0.45)', fillColor: '#fdfaf0' },
+    service: { casing: 3.0, fill: 1.8, casingColor: 'rgba(158,151,134,0.35)', fillColor: '#fbf7ea' },
+    path: { casing: 0, fill: 1.2, casingColor: null, fillColor: 'rgba(158,146,120,0.55)', dashed: [3, 3] }
+  };
+  var MINI_ORDER = ['path', 'service', 'local', 'main'];
+  var MINI_PAPER = '#f2f0ea';               // = styles.css 的 --map-bg，两页视觉同源
+  var MINI_LABEL_TOP = 10;                  // 只点出最重要的 10 个地名，小图不堆字
+  var mini = { spot: -1, timer: null, drawn: [] };
+
+  function widthScale(scale) {
+    return Math.min(1, Math.max(0.42, scale / 0.55));
+  }
+
+  function polyPath(ctx, pts, view) {
+    ctx.beginPath();
+    for (var i = 0; i < pts.length; i++) {
+      var px = view.x(pts[i][0]), py = view.y(pts[i][1]);
+      if (i === 0) { ctx.moveTo(px, py); } else { ctx.lineTo(px, py); }
+    }
+  }
+
+  /* 白描边再填字：浅图纸上任何底色都能读 */
+  function haloText(ctx, s, x, y, color, size, bold) {
+    ctx.font = (bold ? '600 ' : '') + size + 'px system-ui, "Microsoft YaHei", sans-serif';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(242,240,234,0.92)';
+    ctx.strokeText(s, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(s, x, y);
+  }
+
+  /* 起终点：routes.js 里给的是经纬度，必须走 js/proj.js 换米，别在入口页再写一遍投影 */
+  function endpoints() {
+    var p = (ROUTES.pairs && ROUTES.pairs[0]) || null;
+    if (!p || !p.from || !p.to || !window.PROJ || typeof window.PROJ.toXY !== 'function') { return null; }
+    var a = window.PROJ.toXY(p.from[0], p.from[1]);
+    var b = window.PROJ.toXY(p.to[0], p.to[1]);
+    var names = String(p.name || '').split('→');
+    return {
+      a: a, b: b,
+      straight: Math.sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1])),
+      from: String(names[0] || '').trim(), to: String(names[1] || '').trim()
+    };
+  }
+
+  function drawMap() {
+    var cv = $('h-map');
+    if (!cv || !cv.getContext) { return false; }
+    var rect = cv.getBoundingClientRect ? cv.getBoundingClientRect() : null;
+    var cssW = Math.max(240, (rect && rect.width) || cv.width || 560);
+    var cssH = Math.max(180, (rect && rect.height) || cv.height || 420);
+    var dpr = window.devicePixelRatio || 1;
+    /* 高分屏：按设备像素分配画布，再整体套 dpr 变换。
+       这一步在 js/map.js 上修过一次（标注错位），入口页不能重犯同一个坑。 */
+    cv.width = Math.round(cssW * dpr);
+    cv.height = Math.round(cssH * dpr);
+    /* 显示尺寸交给 CSS（width:100% + aspect-ratio），JS 只管设备像素，
+       否则内联 px 会把画布钉死，窗口缩放期间就是糊的。 */
+    var ctx = cv.getContext('2d');
+    if (!ctx) { return false; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (!window.CORE || !window.CORE.fitTransform || !META.bbox_m) { return false; }
+    var view = window.CORE.fitTransform(META.bbox_m, cssW, cssH, 16);
+    var ws = widthScale(view.scale);
+    var roads = BASEMAP.roads || [];
+    var water = BASEMAP.water || [];
+    var labels = (BASEMAP.labels || []).slice(0, MINI_LABEL_TOP);
+
+    /* 纸面 */
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = MINI_PAPER;
+    ctx.fillRect(0, 0, cssW, cssH);
+    ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    polyPath(ctx, (META.campus && META.campus.ring) || [], view);
+    ctx.closePath();
+    ctx.fill();
+
+    /* 水面：approx 一律虚线边 + 半透明，和工具页同一条规则 */
+    water.forEach(function (w) {
+      var pts = w.p || w.ring || [];
+      if (pts.length < 3) { return; }
+      polyPath(ctx, pts, view);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(96,140,186,0.30)';
+      ctx.fill();
+      ctx.lineWidth = Math.max(0.8, 1.4 * ws);
+      ctx.strokeStyle = 'rgba(70,116,160,0.85)';
+      if (w.approx) { ctx.setLineDash([6, 4]); } else { ctx.setLineDash([]); }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+
+    /* 道路：两遍（先全部描边、再全部路面），档内次序 path→main，与 map.js 一致 */
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (var pass = 0; pass < 2; pass++) {
+      for (var oi = 0; oi < MINI_ORDER.length; oi++) {
+        var kind = MINI_ORDER[oi], st = MINI_ROAD_STYLE[kind];
+        if (pass === 0) {
+          if (!st.casing) { continue; }
+          ctx.strokeStyle = st.casingColor;
+          ctx.lineWidth = st.casing * ws;
+          ctx.setLineDash([]);
+        } else {
+          ctx.strokeStyle = st.fillColor;
+          ctx.lineWidth = Math.max(0.5, st.fill * ws);
+          if (st.dashed) { ctx.setLineDash(st.dashed); } else { ctx.setLineDash([]); }
+        }
+        for (var i = 0; i < roads.length; i++) {
+          var r = roads[i];
+          if (r.t !== kind || !r.p || r.p.length < 2) { continue; }
+          polyPath(ctx, r.p, view);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.setLineDash([]);
+
+    /* 校园边界：与 map.js 一样 2.5 px 虚线 [10,6] */
+    if (META.campus && META.campus.ring && META.campus.ring.length > 2) {
+      ctx.lineWidth = Math.max(1, 2.5 * ws);
+      ctx.strokeStyle = 'rgba(90,104,124,0.9)';
+      ctx.setLineDash([10, 6]);
+      polyPath(ctx, META.campus.ring, view);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    /* 起终点 + 直线参考线（明确写"直线"，它不是路线几何） */
+    var ends = endpoints();
+    mini.drawn = [];
+    if (ends) {
+      ctx.lineWidth = Math.max(1, 1.6 * ws);
+      ctx.strokeStyle = 'rgba(255,122,69,0.55)';
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(view.x(ends.a[0]), view.y(ends.a[1]));
+      ctx.lineTo(view.x(ends.b[0]), view.y(ends.b[1]));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      [[ends.a, '起', ends.from], [ends.b, '终', ends.to]].forEach(function (e, k) {
+        var x = view.x(e[0][0]), y = view.y(e[0][1]);
+        ctx.beginPath();
+        ctx.arc(x, y, 5.2, 0, Math.PI * 2);
+        ctx.fillStyle = k === 0 ? '#ff7a45' : '#38c172';
+        ctx.fill();
+        ctx.lineWidth = 1.6;
+        ctx.strokeStyle = '#f2f0ea';
+        ctx.stroke();
+        haloText(ctx, e[1] + ' ' + e[2], x + 8, y + (k === 0 ? -6 : 14), '#20262f', 11, true);
+      });
+      var mx = (view.x(ends.a[0]) + view.x(ends.b[0])) / 2;
+      var my = (view.y(ends.a[1]) + view.y(ends.b[1])) / 2;
+      haloText(ctx, '直线 ' + Math.round(ends.straight).toLocaleString('en-US') + ' m', mx + 6, my,
+        '#5b6675', 10, false);
+      mini.ends = ends;
+    }
+
+    /* 地名：跑马灯之外的第二处"活文字"——spotlight 会轮流点亮其中一个 */
+    labels.forEach(function (L, idx) {
+      var x = view.x(L.x), y = view.y(L.y);
+      var on = idx === mini.spot;
+      haloText(ctx, L.n, x, y, on ? '#c2410c' : '#3b4451', on ? 11.5 : 9.5, on);
+      mini.drawn.push({ n: L.n, x: x, y: y });
+      if (on) {
+        ctx.beginPath();
+        ctx.arc(x, y - 4, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff7a45';
+        ctx.fill();
+      }
+    });
+
+    /* 罗盘：太阳方位角来自演示帧，不是装饰 */
+    var idx = window.CORE.pickFrameIndex ? window.CORE.pickFrameIndex(META.frames || [], DEMO_TIME) : -1;
+    var sun = (idx >= 0 && META.frames[idx] && META.frames[idx].sun) ? META.frames[idx].sun : null;
+    if (sun) {
+      var cx = cssW - 46, cy = 46, rad = 21;
+      var az = sun[0] * Math.PI / 180;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
+      ctx.fill();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(90,104,124,0.6)';
+      ctx.stroke();
+      haloText(ctx, 'N', cx, cy - rad + 11, '#5b6675', 9, false);
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + Math.sin(az) * (rad - 4), cy - Math.cos(az) * (rad - 4));
+      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = '#ffd166';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx + Math.sin(az) * (rad - 4), cy - Math.cos(az) * (rad - 4), 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff9f1c';
+      ctx.fill();
+      haloText(ctx, '日 ' + sun[0].toFixed(1) + '°', cx - rad, cy + rad + 12, '#5b6675', 9.5, false);
+    }
+
+    /* 比例尺：固定 100 m，长度由 view.scale 算出来 */
+    var barLen = 100 * view.scale;
+    var bx = 18, by = cssH - 22;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#3b4451';
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + barLen, by);
+    ctx.moveTo(bx, by - 4);
+    ctx.lineTo(bx, by + 4);
+    ctx.moveTo(bx + barLen, by - 4);
+    ctx.lineTo(bx + barLen, by + 4);
+    ctx.stroke();
+    haloText(ctx, '100 m', bx + barLen / 2 - 14, by - 8, '#3b4451', 9.5, false);
+
+    mini.view = view;
+    return true;
+  }
+
+  /* 图注：整句都是数据算出来的，改数据不用改文案 */
+  function mapCaption() {
+    var cap = $('h-map-cap'), note = $('h-map-note');
+    if (!cap || !note) { return; }
+    var area = META.campus && META.campus.area_m2 ? (META.campus.area_m2 / 1e6).toFixed(2) : '--';
+    var idx = window.CORE.pickFrameIndex ? window.CORE.pickFrameIndex(META.frames || [], DEMO_TIME) : -1;
+    var sun = (idx >= 0 && META.frames[idx] && META.frames[idx].sun) ? META.frames[idx].sun : null;
+    cap.textContent = (META.campus ? META.campus.name : '校园') + ' 缩略 · ' +
+      area + ' km² · ' + (BASEMAP.roadCount || (BASEMAP.roads || []).length) + ' 段道路 · ' +
+      (BASEMAP.waterCount || (BASEMAP.water || []).length) + ' 处水面 · ' +
+      (BASEMAP.labels || []).length + ' 个标注' +
+      (sun ? ' · ' + DEMO_TIME + ' 太阳方位 ' + sun[0].toFixed(1) + '°／高度 ' + sun[1].toFixed(1) + '°' : '') +
+      (mini.ends ? ' · 起终点直线 ' + Math.round(mini.ends.straight) + ' m' : '');
+    note.textContent = '底图与道路全部来自本地 OSM 数据（© OpenStreetMap contributors）；' +
+      (BASEMAP.approxWater ? '水面是示意轮廓，不是测绘数据。' : '') +
+      ' 虚线只是两点的直线参考，不代表路线长度。';
+  }
+
+  /* 轮流点亮一个地名：只在允许动效时开，页面不可见就停 */
+  function spotlight() {
+    if (mini.timer) { clearInterval(mini.timer); mini.timer = null; }
+    if (FX && FX.reduced()) { return; }
+    if (!mini.drawn.length) { return; }
+    mini.timer = setInterval(function () {
+      if (document.hidden) { return; }
+      mini.spot = (mini.spot + 1) % MINI_LABEL_TOP;
+      drawMap();
+    }, 2600);
+  }
+
+  /* ---------- 4. 动效编排 ---------- */
   function heroText(d) {
     var kicker = '热浪天走哪条路 · 校园阴影路线决策';
     if (!FX) { txt('h-kicker', kicker); txt('h-slogan', '凉径 ShadeRoute'); return; }
@@ -208,6 +468,21 @@
     green(d);
     ticker();
     rotator();
+
+    /* 小地图：先画，再写图注（图注要用到算出来的直线距离），最后开轮流点亮 */
+    if (drawMap()) { mapCaption(); spotlight(); }
+    else {
+      txt('h-map-cap', '这个浏览器不支持 canvas，图先不画，下面的数字仍然有效。');
+      txt('h-map-note', '');
+    }
+    var resizeTimer = null;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) { clearTimeout(resizeTimer); }
+      resizeTimer = setTimeout(function () {
+        resizeTimer = null;
+        if (drawMap()) { mapCaption(); }
+      }, 180);
+    });
 
     /* 太阳随帧位置挪一下（CSS 变量，尊重 reduced-motion） */
     var sun = $('h-sun');

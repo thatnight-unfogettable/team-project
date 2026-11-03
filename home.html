@@ -14,18 +14,31 @@
 
   <div class="sky" aria-hidden="true"><span class="sun" id="h-sun"></span></div>
 
-  <header class="hero">
-    <p class="kicker" id="h-kicker"></p>
-    <h1 class="title" id="h-title">凉径 · ShadeRoute Lite</h1>
-    <p class="slogan" id="h-slogan">&nbsp;</p>
-    <p class="place" id="h-place"></p>
+  <header class="hero hero-grid">
+    <div class="hero-text">
+      <p class="kicker" id="h-kicker"></p>
+      <h1 class="title" id="h-title">凉径 · ShadeRoute Lite</h1>
+      <p class="slogan" id="h-slogan">&nbsp;</p>
+      <p class="place" id="h-place"></p>
 
-    <div class="cta-row">
-      <a class="cta" href="index.html" id="h-cta">进入路线对比</a>
-      <span class="cta-hint" id="h-hint"></span>
+      <div class="cta-row">
+        <a class="cta" href="index.html" id="h-cta">进入路线对比</a>
+        <span class="cta-hint" id="h-hint"></span>
+      </div>
+
+      <p class="rotator" id="h-rot" aria-live="polite"></p>
     </div>
 
-    <p class="rotator" id="h-rot" aria-live="polite"></p>
+    <!-- 左图：现场用 canvas 画校园底图缩略（不加载 map.js、不用任何图片）
+         画的每一样东西都来自 data/meta.js + data/basemap.js，页面上不写死数字 -->
+    <figure class="mapcard" id="h-mapcard">
+      <canvas id="h-map" width="560" height="420"
+              role="img" aria-label="中山大学广州南校园缩略底图：校园边界、四级道路、园东湖与示例起终点"></canvas>
+      <figcaption class="map-cap">
+        <span id="h-map-cap"></span>
+        <span class="map-note" id="h-map-note"></span>
+      </figcaption>
+    </figure>
   </header>
 
   <!-- 核心结论：全部由 data/*.js 现场算出，页面上不写死任何数字 -->
@@ -105,6 +118,8 @@
 <script src="data/basemap.js"></script>
 <script src="data/green-factors.js"></script>
 <script src="js/core.js"></script>
+<!-- 小地图要把起终点的经纬度换成米坐标，复用原有投影函数，不在入口页重写一遍口径 -->
+<script src="js/proj.js"></script>
 <script src="js/green-core.js"></script>
 <script src="js/textfx.js"></script>
 <script src="content/strings-green.js"></script>

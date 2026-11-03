@@ -296,9 +296,14 @@ ok('green-ui.js 不劫持原有控件的事件（没有对 #time/#start/#end 的
   !/getElementById\('(time|start|end)'\)/.test(greenUiSrc) &&
   !/querySelector\('#time'\)/.test(greenUiSrc));
 ok('green-ui.js 无 import/export', !/^\s*(import|export)\s/m.test(greenUiSrc));
-ok('home.js 无 import/export 且不碰 canvas（入口页没有地图）',
+ok('home.js 无 import/export，几何与投影全部复用原有函数（不自己写一套口径）',
   !/^\s*(import|export)\s/m.test(read('js/home.js')) &&
-  read('js/home.js').indexOf('getContext') < 0);
+  /CORE\.fitTransform/.test(read('js/home.js')) &&
+  /PROJ\.toXY/.test(read('js/home.js')) &&
+  !/111320|110540/.test(read('js/home.js')));
+ok('入口页仍然不加载重数据与工具页地图代码（缩略图只靠 meta/basemap/routes）',
+  ['data/shadows.js', 'data/graph.js', 'data/buildings.js', 'js/map.js', 'js/router.js', 'js/app.js']
+    .every(function (f) { return read('home.html').indexOf(f) < 0; }));
 ok('green-factors.js 是纯数据（不定义函数、不查 DOM）',
   !/\bfunction\s*\(/.test(read('data/green-factors.js')) &&
   read('data/green-factors.js').indexOf('getElementById') < 0);

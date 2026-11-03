@@ -41,6 +41,37 @@
 
 .hero, .stats, .green-teaser, .cards, .ticker-wrap, .home-foot { position: relative; z-index: 1; }
 
+/* ---------- 主视觉：左图右文 ---------- */
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(280px, 520px);
+  gap: 30px 44px;
+  align-items: center;
+}
+.hero-grid .hero-text { min-width: 0; }
+
+/* 像把一张打印出来的底图钉在页面上：纸面用工具页同一个 --map-bg */
+.mapcard {
+  margin: 0;
+  padding: 12px 12px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .38);
+  transform: rotate(-.5deg);
+}
+.mapcard canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 8px;
+  background: var(--map-bg);
+}
+.map-cap { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; }
+.map-cap > span { font-size: 11.5px; line-height: 1.55; color: var(--text-dim); letter-spacing: .2px; }
+.map-note { font-size: 10.5px; color: #6d7c92; }
+
 /* ---------- 主视觉 ---------- */
 .kicker {
   margin: 0 0 6px;
@@ -232,6 +263,9 @@
 /* ---------- 响应式 ---------- */
 @media (max-width: 900px) {
   #home { padding: 34px 16px 56px; gap: 26px; }
+  .hero-grid { grid-template-columns: 1fr; gap: 22px; }
+  /* 窄屏先给文字与结论，图跟在后面；不斜着摆，省下的都是行宽 */
+  .mapcard { order: 2; transform: none; }
   .stats, .gt-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cards { grid-template-columns: 1fr; }
   .stat-hero .stat-v { font-size: 28px; }

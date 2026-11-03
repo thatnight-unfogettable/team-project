@@ -29,21 +29,52 @@ var PROP_KEYS = ['value', 'type', 'name', 'max', 'min', 'step', 'href', 'title',
   'rel', 'placeholder', 'id', 'disabled', 'checked', 'selected'];
 
 function makeCtxStub() {
-  var m = [1, 0, 0, 1, 0, 0], stack = [], c = { texts: [] };
+  var m = [1, 0, 0, 1, 0, 0], stack = [], c = { texts: [], count: {}, dash: null };
+  /* 记录所有落笔点的外接框（设备像素坐标），用来断言"没有画到画布外面" ——
+     第一轮那个"错位地名"就是这一类问题，几何检查能抓到，肉眼反而容易漏。 */
+  c.bounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  function note(x, y) {
+    var dx = x * m[0] + m[4], dy = y * m[3] + m[5];
+    if (!isFinite(dx) || !isFinite(dy)) { return; }
+    if (dx < c.bounds.minX) { c.bounds.minX = dx; }
+    if (dy < c.bounds.minY) { c.bounds.minY = dy; }
+    if (dx > c.bounds.maxX) { c.bounds.maxX = dx; }
+    if (dy > c.bounds.maxY) { c.bounds.maxY = dy; }
+  }
   c.font = '10px sans-serif';
   c.fillStyle = c.strokeStyle = '';
   c.lineWidth = 1; c.globalAlpha = 1;
   c.textAlign = c.textBaseline = c.lineJoin = '';
-  c.setTransform = function (a, b, cc, d, e, f) { m = [a, b, cc, d, e, f]; };
-  c.save = function () { stack.push(m.slice()); };
-  c.restore = function () { if (stack.length) { m = stack.pop(); } };
   ['clearRect', 'fillRect', 'strokeRect', 'beginPath', 'moveTo', 'lineTo', 'closePath',
     'fill', 'stroke', 'drawImage', 'arc', 'setLineDash', 'quadraticCurveTo', 'bezierCurveTo',
-    'rect', 'clip', 'translate', 'scale', 'rotate'].forEach(function (n) {
-      c[n] = function () {};
+    'rect', 'clip', 'translate', 'scale', 'rotate', 'strokeText', 'fillText'].forEach(function (n) {
+      c.count[n] = 0;
     });
-  c.fillText = c.strokeText = function (s, x, y) {
+  c.setTransform = function (a, b, cc, d, e, f) { m = [a, b, cc, d, e, f]; c.count.setTransform += 1; };
+  c.save = function () { stack.push(m.slice()); };
+  c.restore = function () { if (stack.length) { m = stack.pop(); } };
+  c.getTransform = function () { return m.slice(); };
+  ['clearRect', 'fillRect', 'strokeRect', 'beginPath', 'closePath',
+    'fill', 'stroke', 'drawImage', 'quadraticCurveTo', 'bezierCurveTo',
+    'rect', 'clip', 'translate', 'scale', 'rotate'].forEach(function (n) {
+      c[n] = function () { c.count[n] += 1; };
+    });
+  c.moveTo = function (x, y) { c.count.moveTo += 1; note(x, y); };
+  c.lineTo = function (x, y) { c.count.lineTo += 1; note(x, y); };
+  c.arc = function (x, y, r) { c.count.arc += 1; note(x - r, y - r); note(x + r, y + r); };
+  c.setLineDash = function (d) { c.count.setLineDash += 1; c.dash = (d && d.length) ? d.slice() : null; };
+  c.fillText = function (s, x, y) {
+    c.count.fillText += 1;
+    note(x, y);
     c.texts.push({ n: String(s), dev: [x * m[0] + m[4], y * m[3] + m[5]], a: m[0], font: String(c.font) });
+  };
+  c.strokeText = function (s, x, y) {
+    c.count.strokeText += 1;
+    note(x, y);
+    c.texts.push({
+      n: String(s), dev: [x * m[0] + m[4], y * m[3] + m[5]], a: m[0],
+      font: String(c.font), halo: true
+    });
   };
   c.measureText = function (s) { return { width: String(s).length * 6 }; };
   c.createLinearGradient = c.createRadialGradient = function () {
@@ -128,8 +159,31 @@ function buildStub(opts) {
       },
       removeChild: function (ch) {
         var i = this.children.indexOf(ch);
-        if (i >= 0) { this.children.splice(i, 1); ch.parentNode = null; }
+        if (i >= 0) {
+          this.children.splice(i, 1);
+          ch.parentNode = null;
+          /* 真 DOM 里脱离文档树的节点不再能被 getElementById 找到，
+             桩必须一样，否则"删掉某个节点会怎样"这类降级路径根本测不到。 */
+          if (ch.id && REG[ch.id] === ch) { delete REG[ch.id]; }
+        }
         return ch;
+      },
+      /* 深拷贝：跑马灯要把条目克隆一份接在尾部做成无缝循环。
+         注意不重新登记 id，否则克隆体会把真节点从 REG 里顶掉。 */
+      cloneNode: function (deep) {
+        var src = this;
+        var c = mkEl(String(src.tagName).toLowerCase());
+        c.className = src.className;
+        c._text = src._text;
+        Object.keys(src.attributes).forEach(function (k) {
+          if (k === 'id') { return; }
+          c.attributes[k] = src.attributes[k];
+          if (PROP_KEYS.indexOf(k) >= 0) { c[k] = src.attributes[k]; }
+        });
+        if (deep) {
+          src.children.forEach(function (ch) { c.appendChild(ch.cloneNode(true)); });
+        }
+        return c;
       },
       setAttribute: function (k, v) {
         this.attributes[k] = String(v);
@@ -269,11 +323,28 @@ function buildStub(opts) {
   W.matchMedia = function (q) {
     return { matches: opts.reducedMotion === false ? false : /prefers-reduced-motion/.test(q), media: q };
   };
-  W.tickers = { raf: 0 };
-  var vnow = 0;
-  /* 同步执行回调，让 countUp 一类动画在一次调用内收敛；
-     句柄固定返回 0，免得上层把"已排队"当成"还在排队"而永久跳过重算。 */
-  W.requestAnimationFrame = function (f) { vnow += 16; W.tickers.raf += 1; f(vnow); return 0; };
+  W.tickers = { raf: 0, dropped: 0 };
+  var vnow = 0, queue = [], draining = false;
+  var MAX_FRAMES = opts.maxFrames || 240;      // ≈ 3.8 秒虚拟时间，够动画收敛
+  /* rAF 同步抽干，让 countUp/打字机在一次调用内收敛到终值；
+     但**自递归型动画**（跑马灯的 loop 自己再 rAF）不能把栈打穿，
+     所以按帧批次抽干、超过预算就丢弃剩余帧。 */
+  W.requestAnimationFrame = function (f) {
+    queue.push(f);
+    if (draining) { return 0; }
+    draining = true;
+    var frames = 0;
+    while (queue.length && frames < MAX_FRAMES) {
+      var batch = queue;
+      queue = [];
+      vnow += 16; frames += 1; W.tickers.raf += 1;
+      for (var i = 0; i < batch.length; i++) { batch[i](vnow); }
+    }
+    W.tickers.dropped += queue.length;
+    queue = [];
+    draining = false;
+    return 0;
+  };
   W.cancelAnimationFrame = function () {};
   W.__timers = { timeout: 0, interval: 0 };
   W.setTimeout = function () { W.__timers.timeout += 1; return W.__timers.timeout; };
@@ -307,6 +378,9 @@ function buildStub(opts) {
     rawTextTags: scriptBodies,
     htmlTags: (html.match(/<[a-zA-Z]/g) || []).length
   };
+  /* 降级路径要在脚本跑之前布置好现场（本站 readyState 直接给 complete，
+     boot() 在加载脚本时就跑完了，加载完再改 DOM 是无效的）。 */
+  if (typeof opts.preload === 'function') { opts.preload(doc, REG); }
   (opts.files || []).forEach(function (rel) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, rel), 'utf8'), W, { filename: rel });
   });
