@@ -69,7 +69,109 @@ function loadSandbox() {
   return sandbox;
 }
 
-/* ---------- 2. 逐个跑断言 ---------- */
+/* ---------- 2. 数据前置守卫 ----------
+   数据文件缺失 / 半截 / 帧数对不齐时，先给出"该跑什么命令"，
+   而不是在后面某条断言里抛 TypeError（过去的变化：build.py 正在写
+   data/*.js 时并发跑 smoke，只会看到莫名其妙的 undefined 报错）。
+   ------------------------------------------------------------------------ */
+var DATA_FILES = [
+  'data/meta.js', 'data/buildings.js', 'data/shadows.js',
+  'data/routes.js', 'data/graph.js', 'data/basemap.js'
+];
+
+function preflight() {
+  var problems = [];
+  var contents = {};
+  var sample = null;
+
+  DATA_FILES.forEach(function (rel) {
+    try {
+      contents[rel] = read(rel);
+    } catch (e) {
+      problems.push(rel + ' 不存在或不可读（' + (e.code || e.message) + '）');
+      return;
+    }
+    try {
+      new vm.Script(contents[rel], { filename: rel });   // 只做语法解析，不执行
+    } catch (e) {
+      problems.push(rel + ' 无法解析（' + e.message + '）');
+    }
+  });
+
+  // 语义检查：帧数非空 + shadows/routes 与 meta.frames 对齐
+  var semantic = ['data/meta.js', 'data/shadows.js', 'data/routes.js'];
+  var haveAll = semantic.every(function (rel) { return !!contents[rel]; });
+  if (haveAll) {
+    var g = { console: console };
+    g.window = g;
+    g.globalThis = g;
+    vm.createContext(g);
+    semantic.forEach(function (rel) {
+      try {
+        vm.runInContext(contents[rel], g, { filename: rel });
+      } catch (e) {
+        problems.push(rel + ' 执行失败（' + e.message + '）');
+      }
+    });
+
+    var meta = g.DATA_META;
+    var shadowFrames = g.DATA_SHADOWS;
+    var routesData = g.DATA_ROUTES;
+    var frames = meta && meta.frames;
+    sample = !!(meta && meta.sample === true);
+
+    if (!frames || !frames.length) {
+      problems.push('DATA_META.frames 为空（数据没生成完整）');
+    }
+    if (!shadowFrames || !shadowFrames.length) {
+      problems.push('DATA_SHADOWS 为空（数据没生成完整）');
+    } else if (frames && frames.length && shadowFrames.length !== frames.length) {
+      problems.push('DATA_SHADOWS 帧数 ' + shadowFrames.length +
+        ' != DATA_META.frames ' + frames.length);
+    }
+    if (!routesData || !routesData.frames || !routesData.frames.length) {
+      problems.push('DATA_ROUTES.frames 缺失或为空');
+    } else if (frames && frames.length && routesData.frames.length !== frames.length) {
+      problems.push('DATA_ROUTES.frames 帧数 ' + routesData.frames.length +
+        ' != DATA_META.frames ' + frames.length);
+    }
+    if (!routesData || !routesData.pairs || !routesData.pairs.length) {
+      problems.push('DATA_ROUTES.pairs 为空');
+    } else if (routesData.frames && routesData.frames[0] &&
+      routesData.frames[0].routes &&
+      routesData.frames[0].routes.length !== routesData.pairs.length) {
+      problems.push('DATA_ROUTES.frames[0].routes 条数 ' + routesData.frames[0].routes.length +
+        ' != pairs ' + routesData.pairs.length);
+    }
+  }
+
+  return { problems: problems, sample: sample, fileCount: DATA_FILES.length };
+}
+
+console.log('凉径 ShadeRoute Lite · smoke test');
+console.log('node ' + process.version + ' · root ' + ROOT);
+console.log('--------------------------------------------------');
+
+var GUARD = preflight();
+if (GUARD.problems.length) {
+  console.log('FAIL (guard)  数据前置检查未通过（先修数据，不是代码 bug）');
+  GUARD.problems.forEach(function (p) { console.log('  - ' + p); });
+  console.log('--------------------------------------------------');
+  console.log('SMOKE: PASS 0 / FAIL 1（数据前置守卫）');
+  console.log('该跑什么命令：');
+  console.log('  python tools/build.py all      # 重新生成 data/{meta,buildings,shadows,routes,graph,basemap}.js');
+  console.log('  python tools/build.py sample   # 只想先跑通冒烟时，用示例数据');
+  console.log('然后重跑：node tools/smoke.js');
+  process.exit(1);
+}
+if (GUARD.sample) {
+  console.log('提示：DATA_META.sample === true —— 当前是示例数据（假），卡片数字只用于演示；');
+  console.log('     跑 python tools/build.py all 可换成真实数据。');
+}
+
+/* 顶层 try：任何未捕获异常都转成 FAIL (crash) + 异常消息/栈 + 已完成断言数，并以非 0 退出。
+   （故意不重排下面几百行的缩进：diff 集中在首尾，review 时不用逐行看。） */
+try {
 
 var box = loadSandbox();
 var W = box.window;
@@ -79,9 +181,8 @@ var BUILDINGS = W.DATA_BUILDINGS;
 var SHADOWS = W.DATA_SHADOWS;
 var ROUTES = W.DATA_ROUTES;
 
-console.log('凉径 ShadeRoute Lite · smoke test');
-console.log('node ' + process.version + ' · root ' + ROOT);
-console.log('--------------------------------------------------');
+ok('数据前置守卫通过（' + GUARD.fileCount +
+  ' 个 data/*.js 存在且可解析，frames 非空、shadows 帧数一致）', true);
 
 /* --- 2.1 数据契约 --- */
 ok('DATA_META / DATA_BUILDINGS / DATA_SHADOWS / DATA_ROUTES 均已挂载',
@@ -395,6 +496,51 @@ var offlineBad = [];
 });
 ok('页面文件无外链/CDN（完全离线）', offlineBad.length === 0, offlineBad.join(', '));
 
+/* --- 2.8c file:// 硬约束（"双击即用"的守护） ---
+   file:// 下 fetch/XHR 会被 CORS/协议拒绝，type="module" 也会被拦；
+   一旦有人为了"优雅"引入它们，页面在演示现场就打不开了。 */
+var jsAll = ['js/core.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
+var forbiddenTokens = ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'import('];
+var fileUrlBad = [];
+jsAll.forEach(function (rel) {
+  var src = stripComments(read(rel));
+  forbiddenTokens.forEach(function (tok) {
+    if (src.indexOf(tok) >= 0) { fileUrlBad.push(rel + ' 含 ' + tok); }
+  });
+});
+ok('js/*.js 无 fetch( / XMLHttpRequest / sendBeacon / import(（file:// 双击即用，不发请求）',
+  fileUrlBad.length === 0, fileUrlBad.join('; '));
+
+var htmlNoModule = !/type\s*=\s*["']module["']/i.test(html);
+var htmlBad = [];
+forbiddenTokens.forEach(function (tok) {
+  if (html.indexOf(tok) >= 0) { htmlBad.push('index.html 含 ' + tok); }
+});
+ok('index.html 无 type="module" 也无 fetch( / XHR / import(（file:// 下也能跑）',
+  htmlNoModule && htmlBad.length === 0,
+  (htmlNoModule ? '' : '存在 type="module"') + (htmlBad.length ? '；' + htmlBad.join('; ') : ''));
+
+/* --- 2.8d dpr=2 标注定位（独立 box 真渲染一帧） ---
+   过去 smoke 把 devicePixelRatio 固定为 1，drawLabels 漏 setTransform 的
+   缺陷完全漏检。检查逻辑在 tools/dpr-check.js；反证见 _work/smoke-dpr-test/
+   （在副本里删掉 map.js 那行 setTransform，本条断言必须变红）。 */
+var dprChecker = null;
+var dprLoadErr = null;
+try {
+  dprChecker = require('./dpr-check.js');
+} catch (e) {
+  dprLoadErr = e;
+}
+if (dprLoadErr) {
+  ok('dpr=2 标注定位检查脚本可加载（tools/dpr-check.js）', false,
+    dprLoadErr && dprLoadErr.message ? dprLoadErr.message : String(dprLoadErr));
+} else {
+  var dprResult = dprChecker.run({ root: ROOT, dpr: 2 });
+  dprResult.checks.forEach(function (c) { ok(c.name, c.ok, c.detail); });
+  ok('dpr=2 标注定位检查至少产出 4 条断言（防止检查被架空）',
+    dprResult.checks.length >= 4, 'checks=' + dprResult.checks.length);
+}
+
 /* ---------- 2.9 DOM 集成冒烟：用极简 stub DOM 真跑一遍 proj/map/app ----------
    沙箱开不了浏览器，但渲染路径（MAP.render / APP.render / 新增视觉元素）
    至少要在"没有 DOM 的 Node"里跑一遍，才能把拼错的 id 或未定义变量抓出来。
@@ -484,6 +630,19 @@ makeElement('div', 'compass');
   'cool-min', 'cool-sun', 'cool-shade', 'cool-len',
   'delta', 'demo-date',
   'data-flag', 'notes'].forEach(function (id) { makeElement('div', id); });
+
+// index.html 新增的「示例 A / 示例 B」按钮：stub 里必须存在，否则 app.js
+// 的 bind() 拿不到节点，示例切换根本测不到。
+var pairAEl = makeElement('button', 'pair-a');
+pairAEl.className = 'pair-btn is-on';
+pairAEl.setAttribute('data-pair', '0');
+pairAEl.setAttribute('aria-pressed', 'true');
+pairAEl.textContent = '示例 A';
+var pairBEl = makeElement('button', 'pair-b');
+pairBEl.className = 'pair-btn';
+pairBEl.setAttribute('data-pair', '1');
+pairBEl.setAttribute('aria-pressed', 'false');
+pairBEl.textContent = '示例 B';
 
 box.document = doc;
 box.devicePixelRatio = 1;
@@ -799,6 +958,194 @@ if (W.ROUTER && W.ROUTER.ready() && anchors.length > 24) {
     liveMin !== '--' && liveMin !== '' && !isNaN(parseFloat(liveMin)), liveMin);
   ok('地图点选后标记为「现场计算」', String(registry['route-tag'].textContent) === '现场计算',
     registry['route-tag'].textContent);
+}
+
+/* --- 2.88 示例 A / B 切换（预计算）→ 再点地图（现场计算） ---
+   页面现在有两条输入路径：按钮/默认 = 查预计算表（#route-tag 显示「预计算」），
+   下拉/地图点选 = 浏览器现场算（显示「现场计算」）。这里把两条路径和
+   「地图点选后下拉不许变空白」（markSelect 的 selectedIndex 修复）一起锁住。 */
+if (!jsLoadErr && !initErr && W.ROUTER && W.ROUTER.ready() && anchors.length > 24) {
+  var pairAButton = registry['pair-a'];
+  var pairBButton = registry['pair-b'];
+  var routeTagEl = registry['route-tag'];
+  var startSel = registry['start-select'];
+  var endSel = registry['end-select'];
+  var sliderEl = registry['time-slider'];
+  var pickHintEl = registry['pick-hint'];
+  var frameNow = parseInt(sliderEl.value, 10) || 0;
+  var routesNow = ROUTES.frames[frameNow].routes;
+
+  var readCards = function () {
+    return {
+      fastMin: registry['fast-min'].textContent,
+      fastSun: registry['fast-sun'].textContent,
+      fastLen: registry['fast-len'].textContent,
+      fastShade: registry['fast-shade'].textContent,
+      coolMin: registry['cool-min'].textContent,
+      coolSun: registry['cool-sun'].textContent,
+      coolLen: registry['cool-len'].textContent,
+      coolShade: registry['cool-shade'].textContent
+    };
+  };
+  // 卡片数字的期望值直接由预计算数据 + 页面同一套格式化函数算出来
+  var cardsFor = function (rt) {
+    var sf = CORE.shadeMeters(rt.fastest);
+    var sc = CORE.shadeMeters(rt.cool);
+    return {
+      fastMin: CORE.fmtNum(rt.fastest.minutes, 0),
+      fastSun: CORE.fmtNum(rt.fastest.sun_minutes, 0),
+      fastLen: CORE.fmtNum(rt.fastest.length_m, 0),
+      fastShade: CORE.fmtNum(sf.shadePct, 0) + '%',
+      coolMin: CORE.fmtNum(rt.cool.minutes, 0),
+      coolSun: CORE.fmtNum(rt.cool.sun_minutes, 0),
+      coolLen: CORE.fmtNum(rt.cool.length_m, 0),
+      coolShade: CORE.fmtNum(sc.shadePct, 0) + '%'
+    };
+  };
+  var sameCards = function (a, b) { return JSON.stringify(a) === JSON.stringify(b); };
+  var showCards = function (c) { return JSON.stringify(c); };
+
+  ok('示例按钮已接好（#pair-a / #pair-b 都在 stub DOM 里且可点）',
+    !!(pairAButton && pairBButton));
+
+  // ---- 点「示例 B」：查预计算表 ----
+  pairBButton.dispatch('click');
+  var cardsB = readCards();
+  var expectB = cardsFor(routesNow[1]);
+  ok('点「示例 B」→ route-tag = 预计算',
+    String(routeTagEl.textContent) === '预计算', routeTagEl.textContent);
+  ok('点「示例 B」→ fast/cool 卡片数字 = ROUTES.frames[' + frameNow + '].routes[1]（预计算，逐字段）',
+    sameCards(cardsB, expectB),
+    '实际 ' + showCards(cardsB) + ' / 期望 ' + showCards(expectB));
+  ok('点「示例 B」→ aria-pressed：B=true、A=false，且 B 带 is-on 样式',
+    pairBButton.getAttribute('aria-pressed') === 'true' &&
+    pairAButton.getAttribute('aria-pressed') === 'false' &&
+    String(pairBButton.className).indexOf('is-on') >= 0 &&
+    String(pairAButton.className).indexOf('is-on') < 0,
+    'A=' + pairAButton.getAttribute('aria-pressed') + ' B=' + pairBButton.getAttribute('aria-pressed'));
+  ok('点「示例 B」→ 起终点下拉都选中有效项（selectedIndex >= 0）',
+    typeof startSel.selectedIndex === 'number' && startSel.selectedIndex >= 0 &&
+    typeof endSel.selectedIndex === 'number' && endSel.selectedIndex >= 0 &&
+    startSel.selectedIndex < startSel.children.length &&
+    endSel.selectedIndex < endSel.children.length,
+    'start=' + startSel.selectedIndex + '/' + startSel.children.length +
+    ' end=' + endSel.selectedIndex + '/' + endSel.children.length);
+  ok('点「示例 B」→ 提示条显示示例 B 的起终点',
+    String(pickHintEl.textContent).indexOf('起点：') >= 0 &&
+    String(pickHintEl.textContent).indexOf('终点：') >= 0, pickHintEl.textContent);
+
+  // ---- 点「示例 A」：切回示例 0 ----
+  pairAButton.dispatch('click');
+  var cardsA = readCards();
+  var expectA = cardsFor(routesNow[0]);
+  ok('点「示例 A」→ 切回预计算，数字 = ROUTES.frames[' + frameNow + '].routes[0]',
+    String(routeTagEl.textContent) === '预计算' && sameCards(cardsA, expectA),
+    routeTagEl.textContent + ' | ' + showCards(cardsA) + ' / 期望 ' + showCards(expectA));
+  ok('示例 A / 示例 B 的卡片数字确实不同（示例切换不是空操作）',
+    !sameCards(cardsA, cardsB), showCards(cardsA) + ' vs ' + showCards(cardsB));
+  ok('点「示例 A」→ aria-pressed：A=true、B=false',
+    pairAButton.getAttribute('aria-pressed') === 'true' &&
+    pairBButton.getAttribute('aria-pressed') === 'false',
+    'A=' + pairAButton.getAttribute('aria-pressed') + ' B=' + pairBButton.getAttribute('aria-pressed'));
+
+  // ---- 切回 B，再在地图上点两下 → 现场计算 ----
+  pairBButton.dispatch('click');
+  ok('再次点「示例 B」→ 回到预计算（按钮状态可反复切换）',
+    String(routeTagEl.textContent) === '预计算', routeTagEl.textContent);
+
+  var stubView = CORE.fitTransform(META.bbox_m, 1200, 800, 28);
+  var clickWorld = function (x, y) {
+    mainCanvas.dispatch('click', { clientX: stubView.x(x), clientY: stubView.y(y) });
+  };
+  var anchorDist = function (x, y) {
+    var best = Infinity;
+    for (var ai = 0; ai < anchors.length; ai++) {
+      best = Math.min(best, Math.hypot(anchors[ai].x - x, anchors[ai].y - y));
+    }
+    return best;
+  };
+  // 特意挑两个离地名锚点 > 55 米的路网节点：这样 app.js 的 nearestAnchorName
+  // 会返回「地图选点」，从而走到 markSelect 的"临时项"分支——这正是当初
+  // sel.value 写法导致下拉空白的那个分支。
+  var graphNodes = (W.DATA_GRAPH && W.DATA_GRAPH.nodes) || [];
+  var farPts = [];
+  for (var gni = 0; gni < graphNodes.length && farPts.length < 2; gni++) {
+    var nxy = Array.isArray(graphNodes[gni])
+      ? [graphNodes[gni][0], graphNodes[gni][1]]
+      : [graphNodes[gni].x, graphNodes[gni].y];
+    if (!nxy || !isFinite(nxy[0]) || !isFinite(nxy[1])) { continue; }
+    var snapped = W.ROUTER.snap(nxy[0], nxy[1]);
+    if (!snapped) { continue; }
+    if (anchorDist(snapped.x, snapped.y) <= 55) { continue; }   // 要触发「地图选点」
+    if (farPts.length &&
+      Math.hypot(farPts[0][0] - snapped.x, farPts[0][1] - snapped.y) < 80) { continue; }
+    farPts.push([snapped.x, snapped.y]);
+  }
+  ok('找到两个离地名锚点 > 55 米的路网节点（用于触发「地图选点」分支）',
+    farPts.length === 2,
+    farPts.map(function (p) { return '(' + p[0].toFixed(0) + ',' + p[1].toFixed(0) + ')'; }).join(' '));
+
+  if (farPts.length === 2) {
+    clickWorld(farPts[0][0], farPts[0][1]);
+    clickWorld(farPts[1][0], farPts[1][1]);
+    ok('示例切换后在地图上点两下 → route-tag = 现场计算',
+      String(routeTagEl.textContent) === '现场计算', routeTagEl.textContent);
+
+    // markSelect 回归：地图点选（尤其"地图选点"临时项）后下拉不许空白
+    var startOpt = startSel.children[startSel.selectedIndex];
+    var endOpt = endSel.children[endSel.selectedIndex];
+    ok('地图点选后 start-select selectedIndex >= 0（不是 -1/空白）',
+      typeof startSel.selectedIndex === 'number' && startSel.selectedIndex >= 0 &&
+      startSel.selectedIndex < startSel.children.length,
+      'selectedIndex=' + startSel.selectedIndex + ' / ' + startSel.children.length +
+      ' 当前项=' + (startOpt ? startOpt.textContent : 'undefined'));
+    ok('地图点选后 end-select selectedIndex >= 0（不是 -1/空白）',
+      typeof endSel.selectedIndex === 'number' && endSel.selectedIndex >= 0 &&
+      endSel.selectedIndex < endSel.children.length,
+      'selectedIndex=' + endSel.selectedIndex + ' / ' + endSel.children.length +
+      ' 当前项=' + (endOpt ? endOpt.textContent : 'undefined'));
+    ok('地图点选走的是「地图选点」临时项（markSelect 自定义分支被覆盖）',
+      !!startOpt && !!endOpt &&
+      startOpt.textContent === '地图选点' && endOpt.textContent === '地图选点' &&
+      String(pickHintEl.textContent).indexOf('地图选点') >= 0,
+      'start=' + (startOpt && startOpt.textContent) + ' end=' + (endOpt && endOpt.textContent) +
+      ' hint=' + pickHintEl.textContent);
+    ok('地图点选后卡片仍是现场算的真实数字（不是 --）',
+      String(registry['fast-min'].textContent) !== '--' &&
+      String(registry['cool-min'].textContent) !== '--' &&
+      !isNaN(parseFloat(registry['fast-min'].textContent)),
+      registry['fast-min'].textContent + ' / ' + registry['cool-min'].textContent);
+  }
+
+  // ---- 键盘焦点保护：SELECT 里按方向键不能"换选项 + 切时间"双动作 ----
+  var frameBeforeKey = parseInt(sliderEl.value, 10) || 0;
+  doc.dispatch('keydown', {
+    key: 'ArrowRight', target: { tagName: 'SELECT' }, preventDefault: function () {}
+  });
+  ok('焦点在 SELECT 时方向键不切时间（不再"换选项 + 切时间"双动作）',
+    (parseInt(sliderEl.value, 10) || 0) === frameBeforeKey,
+    'before=' + frameBeforeKey + ' after=' + sliderEl.value);
+  doc.dispatch('keydown', {
+    key: 'ArrowRight', target: { tagName: 'BODY' }, preventDefault: function () {}
+  });
+  ok('焦点不在表单控件时方向键仍能切时间（焦点保护没有把功能一起关掉）',
+    (parseInt(sliderEl.value, 10) || 0) === Math.min(META.frames.length - 1, frameBeforeKey + 1),
+    'before=' + frameBeforeKey + ' after=' + sliderEl.value);
+}
+
+} catch (e) {
+  // 任何未捕获异常都在这里收口：不让 Node 直接甩一段 TypeError 栈就退出
+  fail += 1;
+  var crashText = e && e.message ? e.message : String(e);
+  failures.push('(crash) ' + crashText);
+  console.log('--------------------------------------------------');
+  console.log('FAIL (crash)  ' + crashText);
+  if (e && e.stack) {
+    console.log('异常栈：');
+    console.log(e.stack);
+  }
+  console.log('崩溃前已完成断言：PASS ' + pass + ' / FAIL ' + (fail - 1));
+  console.log('提示：先确认数据完整（python tools/build.py all），再跑 node tools/smoke.js。');
 }
 
 /* ---------- 3. 汇总 ---------- */
