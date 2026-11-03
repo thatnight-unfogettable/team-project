@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>凉径 · ShadeRoute Lite —— 多走 44 米，少晒 4.0 分钟</title>
 <link rel="stylesheet" href="styles.css">
+<!-- ↓ 绿色收益面板样式：新增文件，只写 .gn-* 新名字，不覆盖原有规则 -->
+<link rel="stylesheet" href="styles-green.css">
 </head>
 <body>
 
@@ -205,5 +207,12 @@
 <script src="js/router.js"></script>
 <script src="js/map.js"></script>
 <script src="js/app.js"></script>
+
+<!-- 绿色收益模块（全部新增文件；只读上面的路线长度，不改动原有逻辑） -->
+<script src="data/green-factors.js"></script>
+<script src="js/green-core.js"></script>
+<script src="content/strings-green.js"></script>
+<script src="js/textfx.js"></script>
+<script src="js/green-ui.js"></script>
 </body>
 </html>
