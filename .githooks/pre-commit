@@ -1,0 +1,18 @@
+#!/bin/sh
+# 可选提交门禁：启用方式 `git config core.hooksPath .githooks`
+# 只做两件便宜的事：断言全过 + 数据自洽。跑不过就别提交。
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-commit] node tools/smoke.js"
+node tools/smoke.js >/dev/null || { echo "[pre-commit] smoke 失败，先修再提交（要跳过：git commit --no-verify）"; exit 1; }
+
+if command -v python >/dev/null 2>&1; then
+  echo "[pre-commit] python tools/ci/check_data.py"
+  python tools/ci/check_data.py >/dev/null || { echo "[pre-commit] 数据守卫失败"; exit 1; }
+elif command -v python3 >/dev/null 2>&1; then
+  echo "[pre-commit] python3 tools/ci/check_data.py"
+  python3 tools/ci/check_data.py >/dev/null || { echo "[pre-commit] 数据守卫失败"; exit 1; }
+fi
+
+echo "[pre-commit] OK"
