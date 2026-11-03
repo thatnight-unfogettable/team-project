@@ -655,6 +655,7 @@ compassEl.appendChild(needleEl);
 ['tab-route', 'tab-plan', 'pane-route', 'pane-plan',
   'plan-count', 'plan-area', 'plan-ratio', 'plan-minutes', 'plan-cost', 'plan-wan',
   'plan-baseline', 'plan-optimize', 'plan-plant-all', 'plan-undo', 'plan-clear',
+  'plan-count-input',
   'plan-progress', 'plan-progress-bar', 'plan-progress-text', 'plan-msg',
   'plan-rank', 'plan-rank-block', 'plan-rank-sum', 'plan-rank-note'].forEach(function (id) {
   makeElement('div', id);
@@ -1745,6 +1746,55 @@ if (!jsLoadErr && !initErr && W.ROUTER && W.ROUTER.ready() && anchors.length > 2
     registry['plan-count'].textContent === '0 棵' &&
     registry['plan-cost'].textContent === '0' &&
     registry['plan-rank-block'].hidden === true);
+})();
+
+/* ---------- 2.12 优化棵数可自定义：夹值 / 7 棵路径 / 越界回写 ---------- */
+(function () {
+  var inp = registry['plan-count-input'];
+  var okAll = !!(inp && PL && PL.clampCount && PL.cost && typeof PL.DEFAULT_COUNT === 'number');
+  ok('棵数输入框在 stub DOM 里，PLAN 暴露 DEFAULT_COUNT / MIN_COUNT / MAX_COUNT / clampCount',
+    okAll && PL.DEFAULT_COUNT === 20 && PL.MIN_COUNT === 1 && PL.MAX_COUNT === 600,
+    'all=' + okAll + ' 1/' + (PL && PL.DEFAULT_COUNT) + '/' + (PL && PL.MAX_COUNT));
+  if (!okAll) { return; }
+
+  var cases = [[0, 1], [-5, 1], [7, 7], [9999, 600], [NaN, 20], ['', 20], ['x', 20]];
+  var bad = cases.filter(function (c) { return PL.clampCount(c[0]) !== c[1]; });
+  ok('clampCount 把 0 / 负数 / 越界夹到 1–600，空值与非数字回落默认 20',
+    bad.length === 0, '不合规: ' + JSON.stringify(bad));
+
+  var c7 = PL.cost(7);
+  ok('cost(7) = 7 株 / 21,000 元 / 2.1 万元（成本随棵数线性，单价仍是 3,000 元）',
+    c7.trees === 7 && c7.yuan === 21000 && Math.abs(c7.wan - 2.1) < 1e-9 && c7.perTree === 3000,
+    JSON.stringify(c7));
+
+  // 输入 7 → 按钮文案同步 → 优化 → 排名表 7 行 → 全种下 7 棵 21,000 元
+  registry['tab-plan'].dispatch('click', { type: 'click' });
+  inp.value = '7';
+  inp.dispatch('input', { type: 'input' });
+  ok('把输入框改成 7 → 按钮文案同步成「优化：选 7 个点位」',
+    String(registry['plan-optimize'].textContent).indexOf('7 个点位') >= 0,
+    'button=' + String(registry['plan-optimize'].textContent));
+
+  // stub DOM 的 innerHTML 清空是空操作，所以看"本次新增了几行"，不看总数
+  var rowsBefore7 = (registry['plan-rank'].children || []).length;
+  registry['plan-optimize'].dispatch('click', { type: 'click' });
+  var cntRows = (registry['plan-rank'].children || []).length - rowsBefore7;
+  ok('棵数 7 时点「优化」→ 排名表新增正好 7 行',
+    cntRows === 7, 'rows=' + cntRows);
+
+  registry['plan-plant-all'].dispatch('click', { type: 'click' });
+  ok('一键全种下 7 棵 → 面板 7 棵、成本 21,000 元（0.1 位显示，不会抹成 2 万）',
+    registry['plan-count'].textContent === '7 棵' && registry['plan-cost'].textContent === '21,000',
+    'count=' + registry['plan-count'].textContent + ' cost=' + registry['plan-cost'].textContent);
+
+  // 越界输入：change 时夹回上限并回写输入框
+  inp.value = '9999';
+  inp.dispatch('change', { type: 'change' });
+  ok('输入 9999 触发 change → 输入框夹回 600、按钮文案同步「选 600 个点位」',
+    String(inp.value) === '600' && String(registry['plan-optimize'].textContent).indexOf('600 个点位') >= 0,
+    'value=' + inp.value + ' button=' + String(registry['plan-optimize'].textContent));
+
+  registry['plan-clear'].dispatch('click', { type: 'click' });
 })();
 
 /* ---------- 3. 汇总 ---------- */

@@ -1,6 +1,6 @@
 /* 种树优化器（治理侧）——纯计算层：不含 DOM、不写 data/*、不发请求。
  *
- * 为什么单独一个文件：这里要回答"多种 20 棵树，阴凉涨多少、每万元值不值"，
+ * 为什么单独一个文件：这里要回答"多种 N 棵树（默认 20 棵，页面可改）阴凉涨多少、每万元值不值"，
  * 而 js/trees.js 那 520 棵是**装饰**、明确不进阴影口径。两件事不能混：
  *   - 装饰树：固定种子现场撒，只影响观感（README §7.10）；
  *   - 规划树：用户/优化器放的人工点位，只影响**规划指标**（本文件的 measure/optimize）。
@@ -15,7 +15,7 @@
  *   遮阴面积 = 校园内 10 m 网格里被树影盖住的格数 × 100 m²（当前帧）
  *   路网阴凉占比 = Σ 边长 × max(建筑遮挡比例, 树遮挡比例) ÷ 路网总长（每米等权，与官方同源）
  *   遮阴分钟 = 被树遮住的路段长度 ÷ 1.25 m/s ÷ 60（"把阴凉路段连起来走一遍要多久"）
- *   成本 = 3000 元/株，20 株 = 6 万元；每万元 = 日累计遮阴分钟 ÷ 6
+ *   成本 = 3000 元/株，默认 20 株 = 6 万元；每万元 = 日累计遮阴分钟 ÷ (株数 × 0.3)
  */
 window.PLAN = (function () {
   'use strict';
@@ -41,8 +41,21 @@ window.PLAN = (function () {
   var CLEAR_TREE = 3.2;          // 与装饰树之间（trees.MIN_GAP 一致）
   var ROAD_MIN = 1.2;            // 规划树不能种在路中间
   var MAX_CANDIDATES = 4200;     // 候选池上限，防止极端数据把浏览器拖死
+  /* 优化棵数（页面输入框可改）：默认 20 棵；上限 600 棵 —— 30 m 间距下实测最多落 584 棵 */
+  var DEFAULT_COUNT = 20;
+  var MIN_COUNT = 1;
+  var MAX_COUNT = 600;
 
   function num(v, d) { var n = typeof v === 'string' ? parseFloat(v) : v; return (typeof n === 'number' && isFinite(n)) ? n : d; }
+
+  /* 棵数归一：页面输入框 / localStorage / 外部调用都走这一处。
+     不夹一下的话，空串会变 NaN、0 或负数会让贪心一轮都不跑（"选了 0 个点"）。 */
+  function clampCount(v) {
+    var n = Math.round(num(v, DEFAULT_COUNT));
+    if (n < MIN_COUNT) { return MIN_COUNT; }
+    if (n > MAX_COUNT) { return MAX_COUNT; }
+    return n;
+  }
 
   /* ---------------- 几何 ---------------- */
 
@@ -269,9 +282,12 @@ window.PLAN = (function () {
       var roadPool = [], grovePool = [];
       function addTo(list, x, y, kind) {
         if (list.length >= MAX_CANDIDATES) { return; }
-        var l = legal(x, y, kind);
+        // 先按入库精度（0.1 m）取整再判合法：否则"刚好在路边 1.2 m"的候选
+        // 进了池子、到「一键全种下」时再判就会被取整差撞成"种在路中间"而被悄悄丢掉
+        var rx = Math.round(x * 10) / 10, ry = Math.round(y * 10) / 10;
+        var l = legal(rx, ry, kind);
         if (!l.ok) { return; }
-        list.push({ x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, r: TREE_R, h: TREE_H, kind: kind });
+        list.push({ x: rx, y: ry, r: TREE_R, h: TREE_H, kind: kind });
       }
       // 1) 行道树位：沿每条底图道路每 15 m，两侧各一个候选
       for (var ri = 0; ri < roads.length; ri++) {
@@ -396,7 +412,7 @@ window.PLAN = (function () {
 /* ---------- 优化器 ----------
        贪心选点：每轮挑"日累计边际遮阴分钟"最高的候选，直到 count 个或没有正增益。
        覆盖函数对树的位置是**子模**的（每多一棵，新增覆盖只会更少），所以贪心有 1-1/e 近似保证。
-       约束：两两 ≥ minGap（要"分散到多个片区"，不能 20 棵挤一条路）。
+       约束：两两 ≥ minGap（要"分散到多个片区"，不能 N 棵挤一条路）。
 
        为什么不是每轮把所有候选重算一遍：4200 个候选 × 31 帧 × 每帧几十个采样点，
        全量重算实测 20 s（第一版就这么写的）。现在做两件事把它压到百毫秒级：
@@ -408,7 +424,7 @@ window.PLAN = (function () {
     */
     function optimize(opt) {
       opt = opt || {};
-      var count = num(opt.count, 20);
+      var count = clampCount(opt.count);
       var gap = num(opt.minGap, MIN_GAP);
       var onProgress = opt.onProgress || null;
       var pool = opt.candidates || buildCandidates();
@@ -452,7 +468,7 @@ window.PLAN = (function () {
         nearIdx[ci] = idx; nearDX[ci] = dxs; nearDY[ci] = dys; nearSW[ci] = sws;
       }
 
-      // 覆盖计数：cnt[帧][采样点]（Uint8 够用：最多 20 棵）
+      // 覆盖标记：cnt[帧][采样点] 只存 0/1（与优化棵数无关，600 棵也不会溢出）
       var cnt = new Uint8Array(nF * nSamples);
       var areaFrame = num(opt.areaFrame, -1);     // 面积只报某一帧（默认不报）
       var cellCnt = new Uint8Array(nCells);
@@ -634,6 +650,7 @@ window.PLAN = (function () {
 
   /* ---------------- 持久化（localStorage，不可用时由调用方降级为内存） ---------------- */
   var STORE_KEY = 'shaderoute.plan.v1';
+  var COUNT_KEY = 'shaderoute.plan.count.v1';   // 自定义棵数也记住，下次打开还是上次的 N
 
   function serialize(trees) {
     var out = [];
@@ -661,6 +678,11 @@ window.PLAN = (function () {
 
   return {
     COST_PER_TREE: COST_PER_TREE,
+    DEFAULT_COUNT: DEFAULT_COUNT,
+    MIN_COUNT: MIN_COUNT,
+    MAX_COUNT: MAX_COUNT,
+    COUNT_KEY: COUNT_KEY,
+    clampCount: clampCount,
     TREE_R: TREE_R,
     TREE_H: TREE_H,
     MIN_GAP: MIN_GAP,

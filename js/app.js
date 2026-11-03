@@ -316,6 +316,11 @@ window.APP = (function () {
     if (el.planPlantAll) { el.planPlantAll.addEventListener('click', planPlantAll); }
     if (el.planUndo) { el.planUndo.addEventListener('click', planUndoLast); }
     if (el.planClear) { el.planClear.addEventListener('click', planClear); }
+    if (el.planCountInput) {
+      // 打字过程中只同步按钮文案（不抢着改用户正在输的值）；失焦 / 回车时再把范围归一并记住
+      el.planCountInput.addEventListener('input', function () { planSyncCount(false); });
+      el.planCountInput.addEventListener('change', function () { planSaveCount(planSyncCount(true)); });
+    }
 
     el.startSelect.addEventListener('change', function () {
       var a = anchorAt(parseInt(this.value, 10));
@@ -618,11 +623,60 @@ window.APP = (function () {
     try { window.localStorage.setItem(P.STORE_KEY, P.serialize(state.planTrees)); } catch (e) { /* 忽略 */ }
   }
 
+  /* 20 棵时边际增益是 15.1 这种量级，几百棵时只剩零点几分：
+     固定 1 位小数会把它们全显示成 +0.0，所以小于 1 时给 2 位。 */
+  function planFmt(v) {
+    var n = Number(v) || 0;
+    return n >= 1 ? n.toFixed(1) : n.toFixed(2);
+  }
+
+  /* 万元数只保留到 0.1：20 棵 → 6，7 棵 → 2.1，584 棵 → 175.2 */
+  function planWanFmt(v) {
+    return String(Math.round((Number(v) || 0) * 10) / 10);
+  }
+
+  /* 优化棵数：输入框是唯一来源；空串/非法值回落到 PLAN.DEFAULT_COUNT（默认 20 棵）。
+     棵数只决定贪心跑几轮，评分口径一个字没动（目标函数、30 m 间距、单价都不变）。 */
+  function planWantCount() {
+    var P = planAPI();
+    var raw = el.planCountInput ? el.planCountInput.value : '';
+    return P && P.clampCount ? P.clampCount(raw) : 20;
+  }
+
+  /* 把棵数同步到按钮文案 + 进度条初值；writeValue=true 时顺手把输入框也归一（1–600） */
+  function planSyncCount(writeValue) {
+    var n = planWantCount();
+    if (writeValue && el.planCountInput && String(el.planCountInput.value) !== String(n)) {
+      el.planCountInput.value = String(n);
+    }
+    if (el.planOptimize) { el.planOptimize.textContent = '优化：选 ' + n + ' 个点位'; }
+    if (el.planProgressText && !state.planBusy) { el.planProgressText.textContent = '0 / ' + n; }
+    return n;
+  }
+
+  function planSaveCount(n) {
+    var P = planAPI();
+    if (!P || !P.COUNT_KEY) { return; }
+    try { window.localStorage.setItem(P.COUNT_KEY, String(n)); } catch (e) { /* 忽略 */ }
+  }
+
+  /* 上次用的棵数（跟树的存档同一个 localStorage；读不到就用页面默认值 20） */
+  function planLoadCount() {
+    var P = planAPI();
+    if (!P || !el.planCountInput) { return; }
+    try {
+      var raw = window.localStorage.getItem(P.COUNT_KEY);
+      if (raw !== null && raw !== '') { el.planCountInput.value = String(P.clampCount(raw)); }
+    } catch (e) { /* 忽略：file:// 下禁用 localStorage 时用默认值 */ }
+    planSyncCount(false);
+  }
+
   function planLoad() {
     if (state.planLoaded) { return; }
     state.planLoaded = true;
     var P = planAPI();
     if (!P) { return; }
+    planLoadCount();
     var list = [];
     try { list = P.parse(window.localStorage.getItem(P.STORE_KEY)); } catch (e) { list = []; }
     if (!list.length) { return; }
@@ -652,7 +706,7 @@ window.APP = (function () {
       planRevalidate();
       planSay(state.planTrees.length
         ? '已载入上次的 ' + state.planTrees.length + ' 棵树（可撤销 / 清空）。'
-        : '点地图空地种树；点「优化」让系统挑 20 个最划算的点位。');
+        : '点地图空地种树；点「优化」让系统挑 ' + planWantCount() + ' 个最划算的点位。');
     }
     render();
   }
@@ -771,16 +825,17 @@ window.APP = (function () {
     planSay('已清空。');
   }
 
-  /* ---------- 优化：选 20 个「每万元遮阴分钟」最高的点位 ---------- */
+  /* ---------- 优化：选 N 个「每万元遮阴分钟」最高的点位（N = 输入框，默认 20） ---------- */
   function planOptimize() {
     var ctx = planCtx();
     if (!ctx || state.planBusy) { return; }
+    var want = planWantCount();
     state.planBusy = true;
     if (el.planOptimize) { el.planOptimize.disabled = true; }
     if (el.planProgress) { el.planProgress.hidden = false; }
     if (el.planProgressBar) { el.planProgressBar.style.width = '0%'; }
-    if (el.planProgressText) { el.planProgressText.textContent = '0 / 20'; }
-    planSay('正在跑 31 帧 × 候选池……');
+    if (el.planProgressText) { el.planProgressText.textContent = '0 / ' + want; }
+    planSay('正在跑 31 帧 × 候选池，要挑 ' + want + ' 棵……');
     var t0 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
 
     // 先让浏览器把「计算中」画出来，再同步算（实测约 0.2 s，桌面上不用 Worker）
@@ -788,7 +843,7 @@ window.APP = (function () {
       var res = null;
       try {
         res = ctx.optimize({
-          count: 20,
+          count: want,
           areaFrame: state.frame,
           onProgress: function (k, n) {
             if (el.planProgressBar) { el.planProgressBar.style.width = (k / n * 100).toFixed(0) + '%'; }
@@ -816,8 +871,13 @@ window.APP = (function () {
       }
       planRenderRank(res);
       planRefresh();
+      // 30 m 间距下校园里最多落 584 棵：要得再多也只能给到排得下的数量，必须说清楚
+      var shortNote = res.picks.length < want
+        ? '；要 ' + want + ' 棵，30 m 间距下只排得下 ' + res.picks.length + ' 棵'
+        : '';
       planSay('选出 ' + res.picks.length + ' 个点位：日累计 +' + res.totalMinutes.toFixed(0) +
-        ' 分钟阴凉路段，每万元 ' + res.perWanMinutes.toFixed(1) + ' 分钟（' + Math.round(ms) + ' ms 算完）。');
+        ' 分钟阴凉路段，每万元 ' + res.perWanMinutes.toFixed(1) + ' 分钟（' + Math.round(ms) + ' ms 算完）' +
+        shortNote + '。');
     }, 30);
   }
 
@@ -833,19 +893,23 @@ window.APP = (function () {
       var nm = document.createElement('b');
       nm.textContent = p.desc || planAPI().describe(p.x, p.y, BUILDINGS);
       var gm = document.createElement('span');
-      gm.textContent = '+' + p.gainMinutes.toFixed(1) + ' 分/日';
+      gm.textContent = '+' + planFmt(p.gainMinutes) + ' 分/日';
       var pw = document.createElement('em');
-      pw.textContent = (p.gainMinutes / perWanEach).toFixed(1) + ' 分/万元';
+      pw.textContent = planFmt(p.gainMinutes / perWanEach) + ' 分/万元';
       li.appendChild(no); li.appendChild(nm); li.appendChild(gm); li.appendChild(pw);
       el.planRank.appendChild(li);
     }
     if (el.planRankBlock) { el.planRankBlock.hidden = false; }
     if (el.planRankSum) {
-      el.planRankSum.textContent = '合计 +' + res.totalMinutes.toFixed(0) + ' 分/日 · ' + res.budgetWan.toFixed(0) + ' 万元';
+      // 20 棵 = 6 万元（整数），7 棵 = 2.1 万元：别用 toFixed(0) 把小数的零头抹掉
+      el.planRankSum.textContent = '合计 +' + res.totalMinutes.toFixed(0) + ' 分/日 · ' +
+        planWanFmt(res.budgetWan) + ' 万元';
     }
     if (el.planRankNote) {
+      var P2 = planAPI();
       el.planRankNote.textContent = '每万元 = 日累计阴凉分钟 ÷ ' + res.budgetWan.toFixed(1) +
-        ' 万元；按边际增益排序，两两 ≥ 30 m。点「一键全种下」后可继续逐棵拖动调位置。';
+        ' 万元；共 ' + res.picks.length + ' 棵，按边际增益排序，两两 ≥ ' +
+        (P2 ? P2.MIN_GAP : 30) + ' m。点「一键全种下」后可继续逐棵拖动调位置。';
     }
   }
 
@@ -923,6 +987,7 @@ window.APP = (function () {
     el.planRankBlock = $('plan-rank-block');
     el.planRankSum = $('plan-rank-sum');
     el.planRankNote = $('plan-rank-note');
+    el.planCountInput = $('plan-count-input');
 
     var n = frameCount();
     if (!n) {

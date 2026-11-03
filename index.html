@@ -112,6 +112,13 @@
           <span id="plan-baseline">--</span>
         </div>
 
+        <div class="plan-count-row">
+          <label for="plan-count-input">优化棵数</label>
+          <input type="number" id="plan-count-input" min="1" max="600" step="1" value="20" inputmode="numeric" aria-describedby="plan-count-hint">
+          <span>棵</span>
+          <span class="hint" id="plan-count-hint">1–600，默认 20 棵；30 m 间距下最多落 584 棵</span>
+        </div>
+
         <div class="plan-actions">
           <button type="button" class="act act-primary" id="plan-optimize">优化：选 20 个点位</button>
           <button type="button" class="act" id="plan-plant-all" disabled>一键全种下</button>
@@ -137,10 +144,10 @@
       <section class="block">
         <h2>口径</h2>
         <ul class="notes">
-          <li>单价 ¥3,000/株（含 3 年养护）为<b>假设值</b>，20 株 = 6 万元；改 <code>js/plan.js</code> 的 <code>COST_PER_TREE</code> 即可。</li>
+          <li>单价 ¥3,000/株（含 3 年养护）为<b>假设值</b>，默认 20 株 = 6 万元（棵数可在按钮上方改，1–600；成本随棵数线性变）；改 <code>js/plan.js</code> 的 <code>COST_PER_TREE</code> 即可。</li>
           <li>树影 = 树冠圆（半径 4 m）沿太阳反方向平移 L = h / tan(高度角)，与建筑阴影同一套几何、同一帧。</li>
           <li>面积按 5 m 网格统计；路网占比按边长加权（每米等权），用的是算路那同一份 613 条边。</li>
-          <li>优化 = 贪心边际增益（覆盖函数子模，1−1/e 保证）+ 两两 ≥ 30 m 分散约束。</li>
+          <li>优化 = 贪心边际增益（覆盖函数子模，1−1/e 保证）+ 两两 ≥ 30 m 分散约束；棵数只决定贪心跑几轮，<b>评分口径不变</b>。</li>
         </ul>
       </section>
 
