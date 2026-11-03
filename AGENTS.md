@@ -45,7 +45,7 @@
 - 禁止一个提交里同时出现「文档 + 生成物 + 前端 + 工具链」；超过 20 个文件或 1500 行请拆。
 - 提交前必做：`node tools/smoke.js` 通过 + `git status --porcelain` 只含预期文件。
 - 可选：`git config core.hooksPath .githooks` 启用 pre-commit（自动跑 smoke + 数据检查）。
-- 禁止提交：`*.bak`、`.env*`、`*.token`、`*.pem`、`*.key`、`data/hub.db*`、`node_modules/`、任何 `C:\Users\...` 绝对路径。
+- 禁止提交：`*.bak`、`.env*`、`*.token`、`*.pem`、`*.key`、`data/hub.db*`、`node_modules/`、任何本机绝对路径（Windows 用户目录 / macOS 家目录）。
 
 ## 5. 改动 → 必须重跑什么（照表执行，别猜）
 
@@ -71,7 +71,7 @@
 - **OSM 数据 ODbL 1.0**：页面页脚与 `content/strings.js` 必须保留 "© OpenStreetMap contributors"；由 `data/raw/*.json` 派生的几何数据同样受 ODbL 约束，**不能单独以更严格许可再发布**。
 - 湖是**示意轮廓**（`approx: true`），任何对外材料都必须带"不是测绘数据"这句。
 - token 只放环境变量，**永不进仓库**；一旦怀疑泄漏：先撤销/轮换密钥，再考虑清历史（顺序不能反）。
-- 严禁把 `C:\Users\...` 这类本机绝对路径写进任何文件（CI 会拦）。
+- 严禁把本机绝对路径（Windows 用户目录、macOS 家目录）写进任何文件（CI 的 `hygiene` job 会拦）。
 
 ## 9. 与 AI agent 协作（DSH Agent Teams）
 - 任务走共享任务板（`team_task_create` / `list` / `update`），领任务时声明 `write_scopes`；跨 agent 同一文件是**软警告不是锁**，所以 §3 的"一个 owner"规则必须人工守。

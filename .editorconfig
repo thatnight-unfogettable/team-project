@@ -24,3 +24,7 @@ end_of_line = crlf
 [data/*.js]
 # 生成物，单行大文件；关掉格式化工具对它的"整理"
 insert_final_newline = false
+
+[data/height-report.csv]
+# 人工填报用，中文表头 + 直接用 Excel 打开：这里刻意保留 UTF-8 BOM
+charset = utf-8-bom
