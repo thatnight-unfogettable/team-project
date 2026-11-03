@@ -467,3 +467,12 @@ footer p { margin: 0; }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* 页脚免责与数据署名（演示用途 / ODbL） */
+.disclaimer {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin: 2px 0 0;
+  opacity: 0.8;
+}
