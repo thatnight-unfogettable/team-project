@@ -199,6 +199,35 @@ select {
   padding: 1px 8px;
 }
 
+/* 示例 A / 示例 B：切换预计算的演示路线（瞬时，不重新算路） */
+.pair-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 8px 0 auto;
+}
+.pair-btn {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  color: var(--text-dim);
+  background: #141a24;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.pair-btn:hover { color: var(--text); border-color: #3d4a5f; }
+.pair-btn.is-on {
+  color: #171d28;
+  background: var(--sun);
+  border-color: var(--sun);
+  font-weight: 600;
+}
+.pair-btn:focus-visible {
+  outline: 2px solid var(--sun);
+  outline-offset: 2px;
+}
+
 .route-card {
   border: 1px solid var(--line);
   border-radius: 8px;
