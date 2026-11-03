@@ -254,6 +254,12 @@ window.CORE = (function () {
     return 'rgb(' + g + ',' + (g + 2) + ',' + (g + 6) + ')';
   }
 
+  /* 视图深链接：#iso 直接打开立体视图（截图/分享/答辩都用得上）。
+     放 core 里是为了能在 Node 里单测，不用起浏览器 */
+  function wantsIsoView(hash) {
+    return String(hash || '').toLowerCase().indexOf('iso') >= 0;
+  }
+
   /* 比例尺：从"好看刻度"里挑一个不超过目标像素宽度的最大米数 */
   function scaleBarMeters(scale, targetPx) {
     var s = num(scale, 0);
@@ -282,6 +288,7 @@ window.CORE = (function () {
     compassRotation: compassRotation,
     azimuthDir: azimuthDir,
     buildingFill: buildingFill,
+    wantsIsoView: wantsIsoView,
     scaleBarMeters: scaleBarMeters,
     fmtNum: fmtNum
   };

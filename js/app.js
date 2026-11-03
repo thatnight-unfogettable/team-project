@@ -523,6 +523,10 @@ window.APP = (function () {
     window.MAP.init($('map'));
     bind();
     syncViewButtons(window.MAP && window.MAP.isIso ? window.MAP.isIso() : false);
+    // 深链接：#iso 直接打开立体视图（截图 / 分享 / 答辩现场都能一条链接直开）
+    if (window.location && CORE.wantsIsoView && CORE.wantsIsoView(window.location.hash)) {
+      setViewIso(true);
+    }
     state.ready = true;
     render();
   }
