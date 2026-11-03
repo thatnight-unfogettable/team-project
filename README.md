@@ -9,7 +9,7 @@
 - **这是什么**：中山大学广州校区南校园的热浪天步行决策工具——同一个时刻从 A 到 B，多走几十米换几分钟阴凉，值不值。
 - **核心结论**（14:00，老年人活动中心 → 岭南学院）：**多走 44 米，少晒 4.0 分钟**（阴影覆盖 6% → 35%）。
 - **怎么打开**：双击 `index.html` 即可，纯静态、零依赖、断网可用（页面不发任何请求）。
-  - **在线看**：<https://thatnight-unfogettable.github.io/team-project/>（GitHub Pages，源分支 `fix/p0-review-2026-11-03`；合入 `main` 后切回 `main`）
+  - **在线看**：<https://thatnight-unfogettable.github.io/team-project/>（GitHub Pages，源分支 `main`，推 `main` 即自动部署）
   - **仓库**：<https://github.com/thatnight-unfogettable/team-project>
 - **怎么验证**：`node tools/smoke.js`（173 条断言，退出码 0 为通过）。
 - **数据口径**：权威在 [`docs/AGENTS-10.md`](docs/AGENTS-10.md)（数字）与 [`docs/DATA-SOURCES.md`](docs/DATA-SOURCES.md)（依据）。
