@@ -22,7 +22,10 @@ window.MAP = (function () {
     cssW: 0,
     cssH: 0,
     dpr: 1,
-    view: null,          // PROJ.fit() 的结果（平面视图）
+    view: null,          // 当前视图变换（= fit × 滚轮缩放；见 applyZoom）
+    baseView: null,      // PROJ.fit() 的原始适配（zoom = 1 时的视图）
+    zoom: 1,             // 滚轮缩放倍数：1 = 初始大小，不允许更小
+    focus: null,         // 缩放中心（米坐标；null = bbox 中心）
     iso: false,          // 是否处于立体视图（B：2.5D 体块，见 js/iso.js）
     isoView: null,       // 立体视图的底面投影（比 view 略小，旋转后四角才不出画）
     isoProj: null,       // ISO.make() 的投影器
@@ -44,12 +47,125 @@ window.MAP = (function () {
     path: { casing: 0, fill: 2.2, casingColor: null, fillColor: 'rgba(140,126,98,0.70)', dashed: [5, 4] }
   };
 
+  /* ---------- 滚轮缩放 ----------
+     只换 view 的 scale 与中心，view.x/y/unx/uny 的语义不变 —— 于是阴影、路网、
+     标注、比例尺、地图点选、规划树拖拽全都不用改。
+     ZOOM_MIN = 1 就是"整张校园刚好放进画布"的初始适配：再往下滚一律夹回 1，
+     也就是"不能缩小到比原本的小"。 */
+  var ZOOM_MIN = 1;
+  var ZOOM_MAX = 8;              // 8× 时 1 px ≈ 0.24 m（1200×800 窗口）：楼、树冠、门牌都看得清
+  var ZOOM_SENSITIVITY = 0.0015; // 滚轮 deltaY(px) 的指数系数：一格 ≈ 1.16×
+
+  function numv(v, d) {
+    var n = Number(v);
+    return isFinite(n) ? n : d;
+  }
+
+  function clampv(v, lo, hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+  }
+
+  /* fit() 的结果 + 缩放倍数 + 中心点 => 新 view（其余字段原样带过去） */
+  function makeView(base, zoom, cx, cy) {
+    var s = base.scale * zoom;
+    return {
+      scale: s,
+      pad: base.pad,
+      width: base.width,
+      height: base.height,
+      bbox: base.bbox,
+      cx: cx,
+      cy: cy,
+      x: function (mx) { return base.width / 2 + (mx - cx) * s; },
+      y: function (my) { return base.height / 2 - (my - cy) * s; },
+      unx: function (sx) { return cx + (sx - base.width / 2) / s; },
+      uny: function (sy) { return cy - (sy - base.height / 2) / s; }
+    };
+  }
+
+  /* 按 state.zoom / state.focus 重算 view，顺手更新立体视图的底图与投影器 */
+  function applyZoom() {
+    var base = state.baseView;
+    if (!base) { return; }
+    var cx = base.cx, cy = base.cy;
+    if (state.zoom > ZOOM_MIN && state.focus) {
+      // 中心留在 bbox 内：贴着校园边缘放大时，不会把整张图推出画布
+      cx = clampv(state.focus[0], base.bbox[0], base.bbox[2]);
+      cy = clampv(state.focus[1], base.bbox[1], base.bbox[3]);
+      state.focus = [cx, cy];
+    }
+    state.view = makeView(base, state.zoom, cx, cy);
+    if (window.ISO && window.ISO.fitView) {
+      state.isoView = window.ISO.fitView(state.view, state.cssW, state.cssH, window.ISO.FIT_FACTOR);
+      state.isoProj = window.ISO.make(state.isoView, state.cssW, state.cssH);
+    }
+  }
+
+  var redrawPending = false;
+  /* 滚轮一帧能来好几次：合并到下一帧再重画（没有 rAF 的环境直接画） */
+  function redrawSoon() {
+    if (redrawPending) { return; }
+    var draw = function () {
+      redrawPending = false;
+      if (window.APP && window.APP.redraw) { window.APP.redraw(); }
+    };
+    if (window.requestAnimationFrame) {
+      redrawPending = true;
+      window.requestAnimationFrame(draw);
+    } else {
+      draw();
+    }
+  }
+
+  /* 缩放到 z：夹在 [ZOOM_MIN, ZOOM_MAX]；给了画布坐标 (sx, sy) 就以"光标下的
+     地面点"为锚（缩放前后这个点不动），没给就绕当前中心。 */
+  function zoomTo(z, sx, sy) {
+    var base = state.baseView;
+    if (!base) { return state.zoom; }
+    var next = clampv(numv(z, state.zoom), ZOOM_MIN, ZOOM_MAX);
+    if (Math.abs(next - state.zoom) < 1e-9) { return state.zoom; }
+    if (next === ZOOM_MIN) {
+      state.zoom = ZOOM_MIN;
+      state.focus = null;          // 完全回到 fit()：画布上不留任何偏移
+    } else {
+      if (typeof sx === 'number' && typeof sy === 'number' && state.view) {
+        var ax = state.view.unx(sx), ay = state.view.uny(sy);
+        var s = base.scale * next;
+        state.focus = [ax - (sx - base.width / 2) / s, ay + (sy - base.height / 2) / s];
+      }
+      state.zoom = next;
+    }
+    applyZoom();
+    redrawSoon();
+    return state.zoom;
+  }
+
+  function onWheel(ev) {
+    var base = state.baseView;
+    if (!base) { return; }
+    // Ctrl/⌘ + 滚轮是浏览器自己的缩放（触控板捏合也带 ctrlKey），别抢
+    if (ev.ctrlKey || ev.metaKey) { return; }
+    if (ev.preventDefault) { ev.preventDefault(); }
+    var unit = ev.deltaMode === 1 ? 16 : (ev.deltaMode === 2 ? state.cssH : 1);
+    var dy = numv(ev.deltaY, 0) * unit;
+    if (!dy) { return; }
+    var next = state.zoom * Math.exp(-dy * ZOOM_SENSITIVITY);
+    if (state.iso) {
+      // 立体视图地面斜过来了，"光标下的点"不好对齐：绕当前中心缩放
+      zoomTo(next);
+    } else {
+      var rect = state.canvas.getBoundingClientRect();
+      zoomTo(next, ev.clientX - rect.left, ev.clientY - rect.top);
+    }
+  }
   function init(canvas) {
     state.canvas = canvas;
     state.ctx = canvas.getContext('2d');
     state.off = document.createElement('canvas');
     state.offCtx = state.off.getContext('2d');
     resize();
+    // 滚轮缩放：passive:false 才能 preventDefault（否则整页跟着一起滚）
+    canvas.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('resize', scheduleResize);
   }
 
@@ -77,11 +193,8 @@ window.MAP = (function () {
     c.style.height = state.cssH + 'px';
     state.off.width = c.width;
     state.off.height = c.height;
-    state.view = window.PROJ.fit(state.cssW, state.cssH, 28);
-    if (window.ISO && window.ISO.fitView) {
-      state.isoView = window.ISO.fitView(state.view, state.cssW, state.cssH, window.ISO.FIT_FACTOR);
-      state.isoProj = window.ISO.make(state.isoView, state.cssW, state.cssH);
-    }
+    state.baseView = window.PROJ.fit(state.cssW, state.cssH, 28);
+    applyZoom();   // 保住当前缩放：改窗口大小不跳回初始大小
     if (window.APP && window.APP.redraw) { window.APP.redraw(); }
   }
 
@@ -705,6 +818,11 @@ window.MAP = (function () {
     init: init,
     render: render,
     resize: resize,
+    zoom: function () { return state.zoom; },
+    setZoom: zoomTo,
+    resetZoom: function () { return zoomTo(ZOOM_MIN); },
+    ZOOM_MIN: ZOOM_MIN,
+    ZOOM_MAX: ZOOM_MAX,
     toWorld: toWorld,
     toScreen: toScreen,
     setIso: setIso,
