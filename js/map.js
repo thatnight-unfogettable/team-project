@@ -34,11 +34,14 @@ window.MAP = (function () {
   var FONT = '"Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", sans-serif';
 
   // 路网四档线型：casing = 描边宽，fill = 路面宽（CSS px）
+  // 偏粗：画布缩到 1200×800 看约 1800 m 宽，1 px 只有 1.5 m —— 原 5/3/1.8/1.2 在
+  // 屏幕上读成了"底纹"，尤其占多数的步道（149/296 段）几乎是隐形的。
+  // 现在按 9.0 / 6.6 / 4.4 / 2.2 分档，描边同步加粗加深，路口才不会糊。
   var ROAD_STYLE = {
-    main: { casing: 7.0, fill: 5.0, casingColor: 'rgba(146,139,120,0.55)', fillColor: '#fffdf4' },
-    local: { casing: 4.6, fill: 3.0, casingColor: 'rgba(152,145,128,0.45)', fillColor: '#fdfaf0' },
-    service: { casing: 3.0, fill: 1.8, casingColor: 'rgba(158,151,134,0.35)', fillColor: '#fbf7ea' },
-    path: { casing: 0, fill: 1.2, casingColor: null, fillColor: 'rgba(158,146,120,0.55)', dashed: [3, 3] }
+    main: { casing: 12.6, fill: 9.0, casingColor: 'rgba(98,90,70,0.52)', fillColor: '#fffefa' },
+    local: { casing: 9.2, fill: 6.6, casingColor: 'rgba(112,104,84,0.46)', fillColor: '#fefcf4' },
+    service: { casing: 6.2, fill: 4.4, casingColor: 'rgba(132,124,104,0.40)', fillColor: '#fcf9ee' },
+    path: { casing: 0, fill: 2.2, casingColor: null, fillColor: 'rgba(140,126,98,0.70)', dashed: [5, 4] }
   };
 
   function init(canvas) {
@@ -265,7 +268,7 @@ window.MAP = (function () {
     // 白色描边，在深色阴影上也看得清
     ctx.setLineDash([]);
     ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-    ctx.lineWidth = Math.max(1, width - 4);
+    ctx.lineWidth = Math.max(1, width - 5);
     ctx.globalAlpha = 0.35;
     ctx.stroke();
     ctx.restore();
@@ -689,8 +692,9 @@ window.MAP = (function () {
     // 规划树与推荐点位：压在最上层（要能点到、要能看清编号）
     drawPlan(payload.plan, 'marks');
     // 阴凉路线在下、最快路线在上，重叠时能看出区分
-    drawRoute(payload.coolPts, '#38c172', 7, false);
-    drawRoute(payload.fastPts, '#ff7a45', 7, true);
+    // 线宽跟最粗的主路（9 px）对齐再略宽一点，否则路线会被加粗后的路网淹掉
+    drawRoute(payload.coolPts, '#38c172', 9.5, false);
+    drawRoute(payload.fastPts, '#ff7a45', 9.5, true);
     // 文字压在最上层，免得被路线和楼盖住
     if (base && base.labels) { drawLabels(base.labels, view, ctx); }
     drawEndpoints(payload.fromXY, payload.toXY);
