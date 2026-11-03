@@ -229,7 +229,7 @@
 
 ### A3 · 工作量（被问"做了多少"就翻）
 
-**约 5750 行**代码，三块：**前端约 1470**（`app.js` 约 500 / `core.js` 约 290 / `map.js` 约 410 / `router.js` 约 230 / `proj.js` 约 44）｜**工具链约 3670**（`build.py` 约 1970 / `smoke.js` 约 1160（173 条断言）/ `console-check.js` 约 250 / `preview.py` 约 290）｜**页面约 610**（`index.html` 约 130 + `styles.css` 约 470 + `strings.js` 约 17）。文档约 1900 行（README + docs/ 9 份）。
+**约 7520 行**代码，三块：**前端约 2360**（`app.js` 约 571 / `core.js` 约 380 / `map.js` 约 604 / `iso.js` 约 259 / `trees.js` 约 277 / `router.js` 约 230 / `proj.js` 约 43）｜**工具链约 4470**（`build.py` 约 1973 / `smoke.js` 约 1475（173 条断言）/ `console-check.js` 约 247 / `preview.py` 约 290）｜**页面约 610**（`index.html` 约 130 + `styles.css` 约 470 + `strings.js` 约 17）。文档约 1900 行（README + docs/ 9 份）。
 
 ### A4 · 夏至对照（被问"为什么不用夏至"就翻）
 

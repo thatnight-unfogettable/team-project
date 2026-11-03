@@ -14,12 +14,12 @@
 |---|---|
 | 目录 | `content/ data/ docs/ js/ tools/` + `index.html` + `styles.css` |
 | **没有** | `src/`、`tests/`、`config/`、`package.json` |
-| 前端 | `js/{proj,core,router,map,app}.js`，原生 JS + Canvas，经典 `<script>` |
-| 工具链 | `tools/build.py`（零第三方依赖，13 个子命令）、`tools/smoke.js`、`console-check.js`、`preview.py`、`tools/ci/*` |
+| 前端 | `js/{proj,core,iso,trees,router,map,app}.js`（7 个），原生 JS + Canvas，经典 `<script>` |
+| 工具链 | `tools/build.py`（零第三方依赖，13 个子命令）、`tools/smoke.js`、`console-check.js`、`dpr-check.js`、`preview.py`、`tools/ci/*` |
 | 技术栈硬约束 | 无 npm / 无框架 / 无构建工具 / 无 CDN / 运行时零网络；`file://` 双击可用 |
 | 数据 | `data/raw/*.json` = 原始抓取（**只读**）；`data/*.js` = **生成物**（`window.DATA_*`） |
-| 测试 | `node tools/smoke.js`，退出码 0 才算过 |
-| CI | `.github/workflows/smoke.yml`：`smoke` / `data-integrity` / `hygiene` / `commit-msg` |
+| 测试 | `node tools/smoke.js`（173 条），退出码 0 才算过 |
+| CI | **当前仓库没有工作流文件**（`.github/` 只剩 PR 模板）；要加 workflow 需 token 带 `workflow` scope（`gh auth refresh -s workflow`）。等价门禁：`node tools/smoke.js` + `python tools/ci/check_data.py` |
 | 协作 | **单人 + 1~N 个 AI agent**；历史上写的 hub relay / 4 人分工 / pytest **全部作废** |
 | 分支 | `main` 单分支；有第二个人/agent 长期参与时才开 `feat/<name>` + PR |
 
@@ -40,7 +40,7 @@
 3. 不要为了"让测试过"去改 `data/*.js` 的数值 —— 那是改口径，见 §5。
 
 ## 4. 提交规范
-- 分支：单人直接提交 `main`；多人/多 agent 用 `feat/<name>` + PR（`main` 上有 CI 状态检查）。
+- 分支：单人直接提交 `main`；多人/多 agent 用 `feat/<name>` + PR。注意 `main` 现有"必须走 PR"的保护规则，owner 直推会被**放行但留下 rule bypass 记录**（见 §7）。
 - 提交信息：`type(scope): 摘要`，`type ∈ feat|fix|polish|docs|test|chore`；**一次提交只做一件事**。
 - 禁止一个提交里同时出现「文档 + 生成物 + 前端 + 工具链」；超过 20 个文件或 1500 行请拆。
 - 提交前必做：`node tools/smoke.js` 通过 + `git status --porcelain` 只含预期文件。
@@ -62,8 +62,11 @@
 - 发版动作：更新 `CHANGELOG.md` → `git tag -a vX.Y.Z -m "..."` → `git push origin vX.Y.Z`。
 - 每个演示/交付节点必须有一个 tag。
 
-## 7. GitHub 门禁（配置好之后的约定）
-- `main` 必须过 CI（`.github/workflows/smoke.yml` 的 `smoke` + `data-integrity` + `hygiene`）才能合并。
+## 7. GitHub 门禁（现状 + 约定）
+
+- **现状（2026-11-03）**：仓库已公开、已开 GitHub Pages（源分支 `main`）；`.github/` 只有 PR 模板，**没有工作流文件**，所以"必须过 CI 才能合并"目前靠本地两条命令保证：`node tools/smoke.js` + `python tools/ci/check_data.py`。
+- `main` 开了「Changes must be made through a pull request」保护；owner 直推会被放行但记录一次 rule bypass（2026-11-03 更新 `main` 就是这样一次）。要规范化：要么都走 PR，要么到 Settings → Branches 关掉该规则。
+- 若以后启用 CI：必须过 `smoke` + `data-integrity` + `hygiene` 才合并（加工作流前需 `gh auth refresh -s workflow`）。
 - 禁止 force push 到 `main`、禁止直接删除 `main`。
 - PR 必须填模板：改了什么 / 动了哪些权威数字（旧值→新值）/ 验证命令的真实输出 / 风险。
 

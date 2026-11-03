@@ -17,15 +17,15 @@
 ## 11. 目录与文件（唯一权威）
 
 ```
-team-project/                                # 代码合计约 5750 行（前端约 1470 / 工具链约 3670 / 页面约 610）
+team-project/                                # 代码合计约 7520 行（前端约 2360 / 工具链约 4470 / 页面约 690）
 ├── index.html              # 页面骨架（约 130 行，含起终点下拉 + 地图点选）
 ├── styles.css              # 样式（约 470 行）
 ├── content/strings.js      # 全部文案与免责说明，含 OSM 署名（约 17 行）
-├── js/                     # 前端逻辑合计约 1470 行
+├── js/                     # 前端逻辑合计约 2364 行（含 iso.js / trees.js）
 │   ├── proj.js             # 经纬度 ↔ 屏幕坐标（约 44 行）
 │   ├── core.js             # 纯函数：shadeMeters / routeSummary / WALK_SPEED（约 290 行）
 │   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（约 230 行 / 约 8.5 KB）
-│   ├── map.js              # Canvas 9 层：地面+网格 / 水系 / 道路 / 阴影 / 建筑 / 边界 / 路线 / 标注 / 标记（约 410 行）
+│   ├── map.js              # Canvas 11 层：地面+网格 / 水系 / 道路 / 阴影 / 建筑 / 边界 / 路线 / 标注 / 标记（约 410 行）
 │   └── app.js              # 交互：时间滑块、起终点下拉、地图点选、卡片（约 500 行）
 ├── data/
 │   ├── meta.js             # date / 31 帧 / frames[].sun / bbox_m / campus{name,area_m2,ring}
@@ -40,7 +40,7 @@ team-project/                                # 代码合计约 5750 行（前端
 │       ├── buildings.json  # 555 栋（bbox 原始，含校外）
 │       ├── ways.json       # 297 条 way（bbox 原始）
 │       └── water.json      # [{name:"园东湖", ring[[x,y],...40], approx:true}]（lakering 反推的示意轮廓）
-└── tools/                  # 工具链合计约 3670 行（比前端还长，重点在数据）
+└── tools/                  # 工具链合计约 4469 行（比前端还长，重点在数据）
     ├── build.py            # 零依赖管线（约 1970 行）：sample/osm/fetch/import/shadows/routes/check/all/basemap/water/nodes/lakering/waterblob
     ├── smoke.js            # 173 条断言（约 1300 行）
     ├── console-check.js    # 浏览器控制台手动核对脚本（约 250 行，含底图 4.5 节）

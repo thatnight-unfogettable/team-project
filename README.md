@@ -100,16 +100,18 @@ python tools\build.py all        # osm/fetch + 阴影 + 路线 + 底图
 ## 3. 目录结构
 
 ```
-team-project/                                # 代码合计约 5750 行（前端约 1470 / 工具链约 3670 / 页面约 610）
-├── index.html              # 页面骨架（约 130 行）
-├── styles.css              # 样式（约 470 行）
-├── content/strings.js      # 全部文案与免责说明，含 OSM 署名（约 17 行）
-├── js/                     # 前端逻辑合计约 1470 行
-│   ├── proj.js             # 经纬度 ↔ 屏幕坐标（约 44 行）
-│   ├── core.js             # 纯函数：阴影米数、路线摘要、速度常量（约 290 行）
-│   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（约 230 行 / 约 8.5 KB）
-│   ├── map.js              # Canvas 地图 9 层渲染（地面+网格/水系/道路/阴影/建筑/边界/路线/标注/标记）（约 410 行）
-│   └── app.js              # 交互：时间滑块、起终点下拉、地图点选、卡片（约 500 行）
+team-project/                                # 代码合计约 7520 行（前端约 2360 / 工具链约 4470 / 页面约 690）
+├── index.html              # 页面骨架（约 136 行）
+├── styles.css              # 样式（约 534 行）
+├── content/strings.js      # 全部文案与免责说明，含 OSM 署名（约 16 行）
+├── js/                     # 前端逻辑合计约 2364 行
+│   ├── proj.js             # 经纬度 ↔ 屏幕坐标（约 43 行）
+│   ├── core.js             # 纯函数：阴影米数、路线摘要、速度常量、校门求交（约 380 行）
+│   ├── iso.js              # 2.5D 轴测投影：投影/逆投影、侧面明暗、深度排序（约 259 行）
+│   ├── trees.js            # 树：固定种子确定性生成（行道树 + 空地树），纯观感层（约 277 行）
+│   ├── router.js           # 浏览器端算路：二叉堆 + Dijkstra + 吸附（约 230 行 / 约 8.2 KB）
+│   ├── map.js              # Canvas 地图 10 层渲染（地面+网格/水系/道路/阴影/树/建筑/边界/门与标注/路线/起终点）（约 604 行）
+│   └── app.js              # 交互：时间滑块、起终点下拉、地图点选、卡片、平面/立体切换（约 571 行）
 ├── data/                   # 页面加载数据合计约 1.08 MB（1104.2 KB）
 │   ├── meta.js             # 日期 / 31 帧 / 太阳位置 / bbox / campus（边界 114 顶点）
 │   ├── buildings.js        # 285 栋（h + src，src ∈ osm_levels 21 / estimated 264）
@@ -126,11 +128,13 @@ team-project/                                # 代码合计约 5750 行（前端
 ├── docs/                   # 交付文档 9 份：PITCH / PPT-OUTLINE / DATA-SOURCES / QA-EXTRA / EXAMPLE-QUERIES / SOLO-PLAN / PROJECT-SCOPE / TASKS / AGENTS-10
 ├── AGENTS.md               # agent 协作与流程规则（单人 + AI agent）
 ├── README.md               # 本文
-└── tools/                  # 工具链合计约 3670 行（比前端还长，重点在数据）
-    ├── build.py            # 零依赖预计算管线（约 1970 行）：sample/osm/fetch/import/shadows/routes/check/all/basemap/water/nodes/lakering/waterblob
-    ├── smoke.js            # 173 条断言（约 1300 行）
-    ├── console-check.js    # 浏览器控制台手动核对脚本（约 250 行，含底图 4.5 节）
-    └── preview.py          # 不依赖浏览器的 PNG 预览（约 290 行）：按 map.js 图层重画，沙箱自查用
+└── tools/                  # 工具链合计约 4469 行（比前端还长，重点在数据）
+    ├── build.py            # 零依赖预计算管线（约 1973 行）：sample/osm/fetch/import/shadows/routes/check/all/basemap/water/nodes/lakering/waterblob
+    ├── smoke.js            # 173 条断言（约 1475 行）
+    ├── console-check.js    # 浏览器控制台手动核对脚本（约 247 行，含底图 4.5 节）
+    ├── dpr-check.js        # 像素比/缩放自查（约 322 行）
+    ├── preview.py          # 不依赖浏览器的 PNG 预览（约 285 行）：按 map.js 图层重画，沙箱自查用
+    └── ci/                 # check_data.py：体积预算 + JSON 解析 + 口径不变量 + LF/BOM（约 167 行）
 ```
 
 ### 3.1 底图与算路的分离
@@ -140,7 +144,7 @@ team-project/                                # 代码合计约 5750 行（前端
 - **道路**：297 条 way 按可视范围 bbox±60 m 裁切后成 **296 段**，分四档线型 `main` / `local` / `service` / `path`；先描边再铺路面（否则路口会"断"），且必须画在阴影**之前**（否则影子盖不到路上，像路浮在阴影上）。
 - **楼名**：285 栋里 68 栋有名字，过滤掉 `572`、`532 533`、`东区3180` 这类 OSM 编号型垃圾名后剩 **60 条**，按"重要度 + 底面积"排序；文字带白色描边，并用矩形碰撞检测自动避让，1400×900 画布上实际画出 **50 个**。
 - **湖是示意轮廓，不是测绘数据**：OSM 水系全线抓不到，改由路网环路反推（见 §3.2），`approx: true`，页面画半透明 + 虚线边；**道路名仍然没有**（`data/raw/roadnames.json` 尚未生成：`build.py water` 依赖 OSM 网络，本机受阻未跑通；路上不写字），这条降级依然存在。
-- 渲染共 **9 层**（`js/map.js`）：地面 + 100 m 网格 → 水系 → 道路 → 阴影 → 建筑 → 校园边界 → 路线 → 地名标注 → 起终点/比例尺。
+- 渲染共 **11 层**（`js/map.js`）：地面 + 100 m 网格 → 水系 → 道路 → 阴影 → 树 → 建筑 → 校园边界 → 校门 → 路线 → 地名标注 → 起终点/比例尺。立体视图里"树 + 建筑"合成**一个**按深度排序的场景（画家算法），其余层序不变。
 
 ### 3.2 湖是怎么来的
 

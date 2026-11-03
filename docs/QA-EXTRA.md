@@ -9,7 +9,7 @@
 
 ## Q1：这个项目到底做了多少工作量？一周做得完吗？
 
-- **代码约 5750 行**，三块：**前端逻辑约 1470**（`app.js` 约 500 / `core.js` 约 290 / `map.js` 约 410 / `router.js` 约 230 / `proj.js` 约 44）｜**工具链约 3670**（`build.py` 约 1970 / `smoke.js` 约 1160 / `console-check.js` 约 250 / `preview.py` 约 290）｜**页面约 610**（`index.html` 约 130 / `styles.css` 约 470 / `strings.js` 约 17）。
+- **代码约 7520 行**，三块：**前端约 2360**（`app.js` 约 571 / `core.js` 约 380 / `map.js` 约 604 / `iso.js` 约 259 / `trees.js` 约 277 / `router.js` 约 230 / `proj.js` 约 43）｜**工具链约 4470**（`build.py` 约 1973 / `smoke.js` 约 1475 / `console-check.js` 约 247 / `preview.py` 约 290）｜**页面约 610**（`index.html` 约 130 / `styles.css` 约 470 / `strings.js` 约 17）。
 - **文档约 1900 行**（README + `docs/` 下 9 份 md）。
 - 关键不是行数，是**链路完整**：拉数（OSM 主 API）→ 校园裁切 → 高度 → 太阳 → 阴影环 → 路网 Dijkstra → 数据文件 → 前端查表 → 自动测试。
 - 实测节奏：**4 天**，其中 1.5 天在改"范围"和"日期"这两个数据决策（返工最多的也是这里）。
