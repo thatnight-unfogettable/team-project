@@ -468,6 +468,60 @@ footer p { margin: 0; }
   }
 }
 
+/* ---------- 平面 / 立体视图切换（js/iso.js 的 2.5D 体块） ----------
+   放在罗盘与太阳方位盘下方、右对齐；样式与「示例 A/B」那组按钮同源。 */
+.view-switch {
+  position: absolute;
+  right: 16px;
+  top: 124px;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(16, 20, 28, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+}
+.view-btn {
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 9px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.view-btn:hover { color: var(--text); }
+.view-btn.is-on {
+  color: #171d28;
+  background: var(--sun);
+  font-weight: 600;
+}
+.view-btn:focus-visible {
+  outline: 2px solid var(--sun);
+  outline-offset: 1px;
+}
+
+/* 立体视图下整块地面转了一个角度，指北针得跟着转，否则"N"会指错方向。
+   原来的 border-top 小横杠换成可旋转的指针；角度由 app.js 按 ISO.YAW_DEG 写入。 */
+#compass { border-top-color: rgba(223, 232, 245, 0.22); }
+#compass-needle {
+  position: absolute;
+  left: 50%;
+  top: 4px;
+  width: 2px;
+  height: 9px;
+  margin-left: -1px;
+  background: var(--fast);
+  border-radius: 2px;
+  transform-origin: 50% 13px;
+  transform: rotate(0deg);
+  transition: transform 0.25s ease;
+  pointer-events: none;
+}
+#compass.is-iso { border-top-color: var(--fast); }
+
 /* 页脚免责与数据署名（演示用途 / ODbL） */
 .disclaimer {
   font-size: 11px;

@@ -171,6 +171,7 @@ window.APP = (function () {
     window.MAP.render({
       shadows: SHADOWS[i] || [],
       buildings: BUILDINGS,
+      sun: fr.sun || null,
       fastPts: fastPts,
       coolPts: coolPts,
       fromXY: cur.fromXY || null,
@@ -212,6 +213,35 @@ window.APP = (function () {
     }
   }
 
+  /* ---------- 平面 / 立体视图 ----------
+     立体视图 = 2.5D 体块（几何在 js/iso.js，画法在 js/map.js），
+     零依赖、不联网、不读模型文件。这里只负责按钮状态与指北针。 */
+  function setViewIso(on) {
+    var iso = false;
+    if (window.MAP && window.MAP.setIso) { iso = !!window.MAP.setIso(!!on); }
+    syncViewButtons(iso);
+  }
+
+  function syncViewButtons(iso) {
+    if (el.viewPlan) {
+      el.viewPlan.className = 'view-btn' + (iso ? '' : ' is-on');
+      el.viewPlan.setAttribute('aria-pressed', iso ? 'false' : 'true');
+    }
+    if (el.viewIso) {
+      el.viewIso.className = 'view-btn' + (iso ? ' is-on' : '');
+      el.viewIso.setAttribute('aria-pressed', iso ? 'true' : 'false');
+    }
+    // 地面转了 yaw 又压了纵向之后，"屏幕上方"不再等于正北：
+    // 指北针角度必须用投影算（MAP.northAngle），不能直接拿 yaw 顶替
+    var deg = 0;
+    if (iso && window.MAP && window.MAP.northAngle) { deg = window.MAP.northAngle(); }
+    if (el.compassNeedle) { el.compassNeedle.style.transform = 'rotate(' + deg.toFixed(1) + 'deg)'; }
+    if (el.compass) {
+      var cls = String(el.compass.className || '').replace(/\s*is-iso\b/g, '');
+      el.compass.className = cls + (iso ? ' is-iso' : '');
+    }
+  }
+
   /* ---------- 交互 ---------- */
   function bind() {
     el.slider.addEventListener('input', function () {
@@ -221,6 +251,8 @@ window.APP = (function () {
 
     if (el.pairA) { el.pairA.addEventListener('click', function () { selectPair(0); }); }
     if (el.pairB) { el.pairB.addEventListener('click', function () { selectPair(1); }); }
+    if (el.viewPlan) { el.viewPlan.addEventListener('click', function () { setViewIso(false); }); }
+    if (el.viewIso) { el.viewIso.addEventListener('click', function () { setViewIso(true); }); }
 
     el.startSelect.addEventListener('change', function () {
       var a = anchorAt(parseInt(this.value, 10));
@@ -257,6 +289,10 @@ window.APP = (function () {
       if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') { return; }
       if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
       if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+      // V：平面 / 立体视图来回切（演示时按一个键就行）
+      if (e.key === 'v' || e.key === 'V') {
+        setViewIso(!(window.MAP && window.MAP.isIso && window.MAP.isIso()));
+      }
     });
   }
 
@@ -422,6 +458,10 @@ window.APP = (function () {
     el.notes = $('notes');
     el.pairA = $('pair-a');
     el.pairB = $('pair-b');
+    el.viewPlan = $('view-plan');
+    el.viewIso = $('view-iso');
+    el.compass = $('compass');
+    el.compassNeedle = $('compass-needle');
 
     var n = frameCount();
     if (!n) {
@@ -482,6 +522,7 @@ window.APP = (function () {
 
     window.MAP.init($('map'));
     bind();
+    syncViewButtons(window.MAP && window.MAP.isIso ? window.MAP.isIso() : false);
     state.ready = true;
     render();
   }

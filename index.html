@@ -98,7 +98,11 @@
 
   <!-- 右栏：地图 -->
   <main id="map-wrap">
-    <canvas id="map" role="img" aria-label="校园地图：显示当前时刻的建筑阴影、最快路线与阴凉路线；可用左侧下拉框选择起终点"></canvas>
+    <canvas id="map" role="img" aria-label="校园地图：显示当前时刻的建筑阴影、最快路线与阴凉路线；可用左侧下拉框选择起终点；可切换平面 / 立体视图"></canvas>
+    <div class="view-switch" role="group" aria-label="切换地图视图">
+      <button type="button" class="view-btn is-on" id="view-plan" data-iso="0" aria-pressed="true">平面</button>
+      <button type="button" class="view-btn" id="view-iso" data-iso="1" aria-pressed="false">立体</button>
+    </div>
     <div id="legend">
       <span><i class="lg lg-sun"></i>阳光</span>
       <span><i class="lg lg-shade"></i>阴影</span>
@@ -107,7 +111,7 @@
       <span><i class="lg lg-fast"></i>最快</span>
       <span><i class="lg lg-cool"></i>阴凉</span>
     </div>
-    <div id="compass">N</div>
+    <div id="compass">N<i id="compass-needle"></i></div>
   </main>
 
 </div>
@@ -122,6 +126,7 @@
 
 <script src="content/strings.js"></script>
 <script src="js/core.js"></script>
+<script src="js/iso.js"></script>
 <script src="js/proj.js"></script>
 <script src="js/router.js"></script>
 <script src="js/map.js"></script>

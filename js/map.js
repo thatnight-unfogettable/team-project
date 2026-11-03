@@ -22,7 +22,11 @@ window.MAP = (function () {
     cssW: 0,
     cssH: 0,
     dpr: 1,
-    view: null,          // PROJ.fit() 的结果
+    view: null,          // PROJ.fit() 的结果（平面视图）
+    iso: false,          // 是否处于立体视图（B：2.5D 体块，见 js/iso.js）
+    isoView: null,       // 立体视图的底面投影（比 view 略小，旋转后四角才不出画）
+    isoProj: null,       // ISO.make() 的投影器
+    sun: null,           // 当前帧太阳 [方位角, 高度角]，立体视图算受光面用
     off: null,           // 阴影离屏画布
     offCtx: null
   };
@@ -71,6 +75,10 @@ window.MAP = (function () {
     state.off.width = c.width;
     state.off.height = c.height;
     state.view = window.PROJ.fit(state.cssW, state.cssH, 28);
+    if (window.ISO && window.ISO.fitView) {
+      state.isoView = window.ISO.fitView(state.view, state.cssW, state.cssH, window.ISO.FIT_FACTOR);
+      state.isoProj = window.ISO.make(state.isoView, state.cssW, state.cssH);
+    }
     if (window.APP && window.APP.redraw) { window.APP.redraw(); }
   }
 
@@ -84,6 +92,63 @@ window.MAP = (function () {
     ctx.closePath();
   }
 
+  /* ---------- 立体视图（2.5D 体块）的共用工具 ----------
+     做法：底面图层（网格/水系/路网/阴影/路线）照旧用 view 的米坐标，
+     只在 setTransform 里整体绕画布中心转一个角度；楼则按楼高竖直拔起。
+     于是坐标系有两套：activeView() 给"贴地"的图层用，projPoint() 给
+     既要贴地、又要保持文字正立的东西（标注/起终点/校园名）用。 */
+  function activeView() {
+    return (state.iso && state.isoView) ? state.isoView : state.view;
+  }
+
+  /* 地面图层的变换：平面 = 只有 dpr；立体 = dpr ∘ 绕中心旋转 */
+  function setLayerTransform(ctx) {
+    var dpr = state.dpr;
+    if (state.iso && state.isoProj) {
+      var m = state.isoProj.cssMatrix(dpr);
+      ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    } else {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+  }
+
+  /* 米坐标 -> 画布 CSS 像素（立体视图下带旋转与高度；平面视图忽略 z） */
+  function projPoint(mx, my, z) {
+    if (state.iso && state.isoProj) { return state.isoProj.project(mx, my, z || 0); }
+    return [state.view.x(mx), state.view.y(my)];
+  }
+
+  /* 立体视图的楼：把每栋拔成"顶面 + 朝向观察者的侧面"，从远到近画。
+     几何（投影、可见面、受光、排序）全在 js/iso.js，这里只管照着画。 */
+  function drawBuildingsIso(buildings) {
+    if (!window.ISO || !state.isoProj) { drawBuildings(buildings); return; }
+    var ctx = state.ctx, dpr = state.dpr;
+    var items = window.ISO.scene(buildings, state.isoProj, state.sun);
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.lineJoin = 'round';
+    for (var i = 0; i < items.length; i++) {
+      var faces = items[i].faces;
+      for (var f = 0; f < faces.length; f++) {
+        var face = faces[f], pts = face.pts;
+        ctx.beginPath();
+        for (var k = 0; k < pts.length; k++) {
+          if (k === 0) { ctx.moveTo(pts[k][0], pts[k][1]); } else { ctx.lineTo(pts[k][0], pts[k][1]); }
+        }
+        ctx.closePath();
+        ctx.fillStyle = face.fill;
+        ctx.fill();
+        // 只给顶面描细边：棱角立得住，侧面描边会糊成一片
+        if (face.kind === 'top') {
+          ctx.strokeStyle = 'rgba(62,72,90,0.30)';
+          ctx.lineWidth = 0.7;
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
   /* ---------- 阴影：先画到离屏画布，再整体半透明贴上来 ---------- */
   function drawShadows(shadowRings) {
     var octx = state.offCtx;
@@ -92,9 +157,16 @@ window.MAP = (function () {
     octx.clearRect(0, 0, state.off.width, state.off.height);
     if (!shadowRings || !shadowRings.length) { return; }
 
+    // 阴影是"铺在地上的多边形"：立体视图下跟地面一起转，只是这里的坐标
+    // 已经乘过 dpr（pathPoly 内部乘），所以要用设备像素版的矩阵
+    if (state.iso && state.isoProj) {
+      var sm = state.isoProj.deviceMatrix(dpr);
+      octx.setTransform(sm[0], sm[1], sm[2], sm[3], sm[4], sm[5]);
+    }
+
     octx.fillStyle = '#1d2a45';
     for (var i = 0; i < shadowRings.length; i++) {
-      pathPoly(octx, shadowRings[i], state.view, dpr);
+      pathPoly(octx, shadowRings[i], activeView(), dpr);
       octx.fill();
     }
 
@@ -128,9 +200,9 @@ window.MAP = (function () {
   /* ---------- 路线 ---------- */
   function drawRoute(pts, color, width, dashed) {
     if (!pts || pts.length < 2) { return; }
-    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    var ctx = state.ctx, view = activeView(), dpr = state.dpr;
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setLayerTransform(ctx);
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.lineJoin = 'round';
@@ -154,13 +226,13 @@ window.MAP = (function () {
   }
 
   function drawEndpoints(fromXY, toXY) {
-    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    var ctx = state.ctx, dpr = state.dpr;
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);   // 圆点与"起/终"两个字保持正立
     [[fromXY, '#38c172', '起'], [toXY, '#ff7a45', '终']].forEach(function (item) {
       var p = item[0];
       if (!p) { return; }
-      var px = view.x(p[0]), py = view.y(p[1]);
+      var pp = projPoint(p[0], p[1], 0), px = pp[0], py = pp[1];
       ctx.beginPath();
       ctx.arc(px, py, 7, 0, Math.PI * 2);
       ctx.fillStyle = '#fff';
@@ -180,9 +252,9 @@ window.MAP = (function () {
   /* ---------- 校园边界 ---------- */
   function drawCampus(ring) {
     if (!ring || ring.length < 3) { return; }
-    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    var ctx = state.ctx, view = activeView(), dpr = state.dpr;
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setLayerTransform(ctx);
     pathPoly(ctx, ring, view, 1);
     ctx.strokeStyle = 'rgba(46,110,74,0.75)';
     ctx.lineWidth = 2.5;
@@ -196,23 +268,26 @@ window.MAP = (function () {
       if (ring[i][1] > top[1]) { top = ring[i]; }
     }
     var label = '中山大学南校园';
+    // 文字必须正立：立体视图下先退回"只有 dpr"的变换，再用投影点定位
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var tp = projPoint(top[0], top[1], 0);
     ctx.font = '600 12px "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     var tw = ctx.measureText(label).width;
     ctx.fillStyle = 'rgba(255,255,255,0.82)';
-    ctx.fillRect(view.x(top[0]) + 6, view.y(top[1]) - 20, tw + 10, 17);
+    ctx.fillRect(tp[0] + 6, tp[1] - 20, tw + 10, 17);
     ctx.fillStyle = 'rgba(46,110,74,0.95)';
-    ctx.fillText(label, view.x(top[0]) + 11, view.y(top[1]) - 5);
+    ctx.fillText(label, tp[0] + 11, tp[1] - 5);
     ctx.restore();
   }
 
   /* ---------- 水系 ---------- */
   function drawWater(water) {
     if (!water || !water.length) { return; }
-    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    var ctx = state.ctx, view = activeView(), dpr = state.dpr;
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setLayerTransform(ctx);
     for (var i = 0; i < water.length; i++) {
       var w = water[i];
       if (!w.p || w.p.length < 3) { continue; }
@@ -232,13 +307,13 @@ window.MAP = (function () {
   /* ---------- 道路网 ---------- */
   function drawRoads(roads) {
     if (!roads || !roads.length) { return; }
-    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    var ctx = state.ctx, view = activeView(), dpr = state.dpr;
 
     // 分两遍：先铺所有描边，再铺所有路面。
     // 否则后画的描边会盖住前一条路的路面，路口看着像断了。
     var order = ['path', 'service', 'local', 'main'];
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setLayerTransform(ctx);
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
@@ -305,7 +380,8 @@ window.MAP = (function () {
       var text = L.n;
       var tw = ctx.measureText(text).width;
       var th = size + 3;
-      var px = view.x(L.x), py = view.y(L.y);
+      var pb = projPoint(L.x, L.y, 0);
+      var px = pb[0], py = pb[1];
 
       // 出了画布就不画（省得白算）
       if (px < -60 || px > W + 60 || py < -40 || py > H + 40) { continue; }
@@ -327,7 +403,7 @@ window.MAP = (function () {
 
   /* ---------- 比例尺 ---------- */
   function drawScaleBar() {
-    var ctx = state.ctx, dpr = state.dpr, view = state.view;
+    var ctx = state.ctx, dpr = state.dpr, view = activeView();
     // 挑一个"好看刻度"，规则在 js/core.js（可在 Node 里单测）
     var picked = window.CORE.scaleBarMeters(view.scale, 90);
     var px = picked * view.scale;
@@ -351,13 +427,32 @@ window.MAP = (function () {
   /* 屏幕坐标 -> 米坐标（app.js 处理地图点选时用） */
   function toWorld(sx, sy) {
     if (!state.view) { return null; }
+    if (state.iso && state.isoProj) { return state.isoProj.unproject(sx, sy); }
     return [state.view.unx(sx), state.view.uny(sy)];
+  }
+
+  /* 平面 / 立体视图切换（app.js 的按钮调用；改完立刻重画） */
+  function setIso(flag) {
+    var on = !!flag;
+    if (state.iso === on) { return state.iso; }
+    state.iso = on;
+    if (window.APP && window.APP.redraw) { window.APP.redraw(); }
+    return state.iso;
+  }
+
+  function isIso() { return state.iso; }
+
+  /* 正北在屏幕上的角度（度）：立体视图下地面转了 yaw 又压了纵向，
+     指北针必须用投影算出来的真实角度，不能直接拿 yaw 用 */
+  function northAngle() {
+    return (state.iso && state.isoProj) ? state.isoProj.northDeg() : 0;
   }
 
   /* ---------- 对外：画一帧 ---------- */
   function render(payload) {
     var ctx = state.ctx;
     if (!ctx || !state.view) { return; }
+    state.sun = payload.sun || null;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
@@ -367,9 +462,9 @@ window.MAP = (function () {
     ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
 
     // 地面网格（每 100 m），给"工程感"
-    var view = state.view, dpr = state.dpr, bbox = window.PROJ.bbox;
+    var view = activeView(), dpr = state.dpr, bbox = window.PROJ.bbox;
     ctx.save();
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setLayerTransform(ctx);
     ctx.strokeStyle = 'rgba(120,125,135,0.16)';
     ctx.lineWidth = 1;
     for (var mx = Math.ceil(bbox[0] / 100) * 100; mx <= bbox[2]; mx += 100) {
@@ -389,7 +484,11 @@ window.MAP = (function () {
     }
 
     drawShadows(payload.shadows);
-    drawBuildings(payload.buildings || []);
+    if (state.iso && state.isoProj) {
+      drawBuildingsIso(payload.buildings || []);
+    } else {
+      drawBuildings(payload.buildings || []);
+    }
     drawCampus(payload.campusRing);
     // 阴凉路线在下、最快路线在上，重叠时能看出区分
     drawRoute(payload.coolPts, '#38c172', 7, false);
@@ -404,6 +503,9 @@ window.MAP = (function () {
     init: init,
     render: render,
     resize: resize,
-    toWorld: toWorld
+    toWorld: toWorld,
+    setIso: setIso,
+    isIso: isIso,
+    northAngle: northAngle
   };
 })();
