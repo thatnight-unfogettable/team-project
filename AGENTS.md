@@ -21,7 +21,7 @@
 | 测试 | `node tools/smoke.js`（224 条）+ `node tools/smoke-green.js`（187 条），退出码 0 才算过 |
 | CI | **当前仓库没有工作流文件**（`.github/` 只剩 PR 模板）；要加 workflow 需 token 带 `workflow` scope（`gh auth refresh -s workflow`）。等价门禁：`node tools/smoke.js` + `python tools/ci/check_data.py` |
 | 协作 | **单人 + 1~N 个 AI agent**；历史上写的 hub relay / 4 人分工 / pytest **全部作废** |
-| 分支 | `main` 单分支；有第二个人/agent 长期参与时才开 `feat/<name>` + PR |
+| 分支 | `main`（受保护：必须 PR ＋ 1 个 approving review）＋ 协作者分支 `feat/<name>`；3 个协作者都是 write，**直推 `main` 一定被拒**，走 PR 由 owner 点 Approve（详见 §7） |
 
 ## 2. 目录职责
 | 路径 | 谁能改 | 说明 |
@@ -64,11 +64,15 @@
 
 ## 7. GitHub 门禁（现状 + 约定）
 
-- **现状（2026-11-03）**：仓库已公开、已开 GitHub Pages（源分支 `main`）；`.github/` 只有 PR 模板，**没有工作流文件**，所以"必须过 CI 才能合并"目前靠本地两条命令保证：`node tools/smoke.js` + `python tools/ci/check_data.py`。
-- `main` 开了「Changes must be made through a pull request」保护；owner 直推会被放行但记录一次 rule bypass（2026-11-03 更新 `main` 就是这样一次）。要规范化：要么都走 PR，要么到 Settings → Branches 关掉该规则。
-- 若以后启用 CI：必须过 `smoke` + `data-integrity` + `hygiene` 才合并（加工作流前需 `gh auth refresh -s workflow`）。
+- **现状（2026-11-03 实测）**：仓库已公开、已开 GitHub Pages（源分支 `main`）；`.github/` 只有 PR 模板，**没有工作流文件**，所以"必须过 CI 才能合并"目前靠本地三条命令保证：`node tools/smoke.js` + `node tools/smoke-green.js` + `python tools/ci/check_data.py`。
+- **协作者与权限（实测，别再猜）**：`Litca111` / `YOU77888` / `hhd2026` 都是 **write**（不是 admin）；owner `thatnight-unfogettable` 是 admin。
+- **`main` 的保护规则（实测）**：必须走 PR + **至少 1 个 approving review**（`required_approving_review_count = 1`）；`enforce_admins = false`、无 required status checks、无 push 白名单、无 rulesets、禁止 force push、禁止删除。
+  → 结论：**协作者直推 `main` 一定被拒**（`GH006: Protected branch update failed` / `protected branch hook declined`），这是规则不是故障；只有 owner 能直推，且每次都会留一条 `Bypassed rule violations` 记录。
+  → 协作者正确姿势：`git push origin feat/<name>`（非保护分支）→ 开 PR → 等 **1 个 write 成员点 Approve**（owner 来点）→ Squash/Merge。
+- 若以后启用 CI：必须过 `smoke` + `smoke-green` + `data-integrity` + `hygiene` 才合并（加工作流前需 `gh auth refresh -s workflow`）。
 - 禁止 force push 到 `main`、禁止直接删除 `main`。
 - PR 必须填模板：改了什么 / 动了哪些权威数字（旧值→新值）/ 验证命令的真实输出 / 风险。
+- 排查"推不上去"的顺序：① 报错是不是 `protected branch`（是 → 走 PR，别改权限）；② 是不是 `Permission denied`/`403`（凭据问题）；③ 是不是 `rejected ... you do not have locally`（先 `git pull --rebase`，`main` 常被推进）；④ 是不是在 fork 里推（fork 的 `main` 不是本仓 `main`，要开 PR 回来）。
 
 ## 8. 保密与合规
 - **OSM 数据 ODbL 1.0**：页面页脚与 `content/strings.js` 必须保留 "© OpenStreetMap contributors"；由 `data/raw/*.json` 派生的几何数据同样受 ODbL 约束，**不能单独以更严格许可再发布**。
