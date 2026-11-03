@@ -54,7 +54,8 @@ function loadSandbox() {
     'data/basemap.js',
     'content/strings.js',
     'js/core.js',
-    'js/trees.js'
+    'js/trees.js',
+    'js/plan.js'
   ];
 
   for (var i = 0; i < files.length; i++) {
@@ -457,7 +458,7 @@ if (lake) {
 }
 
 /* --- 2.8 静态约束（不改数据、不联网、语法可解析） --- */
-var jsFiles = ['js/core.js', 'js/trees.js', 'js/iso.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
+var jsFiles = ['js/core.js', 'js/trees.js', 'js/plan.js', 'js/iso.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
 var syntaxBad = [];
 for (var s = 0; s < jsFiles.length; s++) {
   try {
@@ -466,7 +467,7 @@ for (var s = 0; s < jsFiles.length; s++) {
     syntaxBad.push(jsFiles[s] + ': ' + e.message);
   }
 }
-ok('6 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
+ok('7 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
 
 function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
@@ -497,7 +498,12 @@ ok('index.html 引入 js/iso.js 一次，且在 map.js 之前',
   'iso=' + isoAt + ' map=' + scriptSrcs.indexOf('js/map.js'));
 
 var treesAt = scriptSrcs.indexOf('js/trees.js');
-ok('index.html 引入 js/trees.js 一次，且在 core.js 之后、app.js 之前',
+    var planAt = scriptSrcs.indexOf('js/plan.js');
+    ok('index.html 引入 js/plan.js 一次，且在 trees.js 之后、app.js 之前',
+      scriptSrcs.filter(function (x) { return x === 'js/plan.js'; }).length === 1 &&
+      planAt > treesAt && planAt < appAt);
+
+    ok('index.html 引入 js/trees.js 一次，且在 core.js 之后、app.js 之前',
   scriptSrcs.filter(function (x) { return x === 'js/trees.js'; }).length === 1 &&
   treesAt > coreAt && treesAt < appAt,
   'trees=' + treesAt + ' core=' + coreAt + ' app=' + appAt);
@@ -512,7 +518,7 @@ ok('页面文件无外链/CDN（完全离线）', offlineBad.length === 0, offli
 /* --- 2.8c file:// 硬约束（"双击即用"的守护） ---
    file:// 下 fetch/XHR 会被 CORS/协议拒绝，type="module" 也会被拦；
    一旦有人为了"优雅"引入它们，页面在演示现场就打不开了。 */
-var jsAll = ['js/core.js', 'js/trees.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
+var jsAll = ['js/core.js', 'js/trees.js', 'js/plan.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
 var forbiddenTokens = ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'import('];
 var fileUrlBad = [];
 jsAll.forEach(function (rel) {
@@ -645,6 +651,15 @@ var legend = makeElement('div', 'legend');
 var compassEl = makeElement('div', 'compass');
 var needleEl = makeElement('i', 'compass-needle');
 compassEl.appendChild(needleEl);
+// 治理侧：种树规划的面板与按钮（app.js 的 init/bind 要拿到它们）
+['tab-route', 'tab-plan', 'pane-route', 'pane-plan',
+  'plan-count', 'plan-area', 'plan-ratio', 'plan-minutes', 'plan-cost', 'plan-wan',
+  'plan-baseline', 'plan-optimize', 'plan-plant-all', 'plan-undo', 'plan-clear',
+  'plan-progress', 'plan-progress-bar', 'plan-progress-text', 'plan-msg',
+  'plan-rank', 'plan-rank-block', 'plan-rank-sum', 'plan-rank-note'].forEach(function (id) {
+  makeElement('div', id);
+});
+
 ['time-label', 'time-slider', 'sun-elev', 'sun-az', 'sun-hint',
   'start-select', 'end-select', 'pick-hint', 'route-tag',
   'fast-min', 'fast-sun', 'fast-shade', 'fast-len',
@@ -680,11 +695,13 @@ viewIsoEl.textContent = '立体';
 
 box.document = doc;
 box.devicePixelRatio = 1;
+// 优化按钮用 setTimeout 把"计算中"先画出来；stub 里直接同步执行
+box.setTimeout = function (fn) { fn(); };
 box.addEventListener = function () {};
 
 var jsLoadErr = null;
 try {
-  ['js/trees.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
+  ['js/trees.js', 'js/plan.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
     vm.runInContext(read(rel), box, { filename: rel });
   });
 } catch (e) {
@@ -959,6 +976,183 @@ if (!jsLoadErr && !initErr) {
       ok('图例补了「树」一项（画布上有树，图例不能缺）',
         html.indexOf('lg-tree') >= 0 && read('styles.css').indexOf('.lg-tree') >= 0);
     }
+
+/* --- 种树优化器（治理侧，面 2）---
+       这层是"规划演算"：树影按胶囊几何现场算，官方「阴凉 %」一个数字都不改。
+       锁五件事：几何对不对、候选点是否合法、优化结果单调/分散/确定、
+       成本换算自洽、不写 data/ 不碰网络。 */
+    var PL = W.PLAN;
+    ok('js/plan.js 已加载（规划树影 + 指标 + 优化器）',
+      !!PL && typeof PL.makeContext === 'function' && typeof PL.shadowCapsule === 'function' &&
+      typeof PL.cost === 'function' && typeof PL.serialize === 'function');
+
+    if (PL) {
+      // 1) 胶囊几何：90° 太阳 → 影子退化成圆；45° → 长度 = h/tan(45°) = h
+      var capNoon = PL.shadowCapsule({ x: 0, y: 0, r: 4, h: 9 }, [180, 90]);
+      ok('太阳在正上方（90°）时树影退化成一个圆（L=0）',
+        !!capNoon && Math.abs(capNoon.len) < 1e-9 && Math.abs(capNoon.bx) < 1e-9 && Math.abs(capNoon.by) < 1e-9);
+
+      var capS = PL.shadowCapsule({ x: 0, y: 0, r: 4, h: 9 }, [180, 45]);
+      ok('太阳在南（方位 180°）时影子朝北（by>0、bx=0），与 build.py 的 (-sin, -cos)·L 一致',
+        capS.by > 0 && Math.abs(capS.bx) < 1e-9 && Math.abs(capS.len - 9) < 1e-6,
+        'cap=(' + capS.bx.toFixed(2) + ',' + capS.by.toFixed(2) + ') len=' + capS.len.toFixed(4));
+
+      ok('太阳低于 3° 时不出树影（和 build.py 的 MIN_SUN_ELEVATION 一致）',
+        PL.shadowCapsule({ x: 0, y: 0, r: 4, h: 9 }, [180, 0.5]) === null);
+
+      ok('点判定：树下方与影子中段在影内，背面 5 m 在影外',
+        PL.pointInCapsule(0, 0, capS) && PL.pointInCapsule(0, 4, capS) && !PL.pointInCapsule(0, -5, capS));
+
+      // 2) 上下文：路网采样 / 5 m 网格 / 候选池
+      var pctx = PL.makeContext({
+        buildings: W.DATA_BUILDINGS,
+        water: (W.DATA_BASEMAP && W.DATA_BASEMAP.water) || [],
+        roads: (W.DATA_BASEMAP && W.DATA_BASEMAP.roads) || [],
+        campusRing: W.DATA_META.campus.ring,
+        frames: W.DATA_META.frames,
+        bbox: W.DATA_META.bbox_m,
+        graph: W.DATA_GRAPH,
+        blockers: treesA
+      });
+      var pgeo = pctx.geometry, proad = pctx.road;
+      ok('路网采样 = 613 条边 × 每边 4 点 = 2452（与 build.py 的 sampling 同源）',
+        proad.nSamples === W.DATA_GRAPH.edges.length * 4 && proad.nSamples === 2452,
+        'nSamples=' + proad.nSamples + ' edges=' + proad.edges);
+      ok('面积网格是 5 m，且界内格 > 3 万（够细，单棵树不会被量化成 0）',
+        pgeo.cell === 5 && pgeo.insideCount > 30000,
+        'cell=' + pgeo.cell + ' inside=' + pgeo.insideCount);
+
+      // 3) 基线：用 plan.js 的公式复算官方 14:00 数字，必须对得上
+      var idx1400p = -1;
+      for (var fp = 0; fp < W.DATA_META.frames.length; fp++) {
+        if (W.DATA_META.frames[fp].t === '14:00') { idx1400p = fp; }
+      }
+      var pbase = pctx.measure([], idx1400p);
+      ok('基线复算 = README 的「14:00 阴凉占比 19.9%」（两边公式一致）',
+        Math.abs(pbase.ratio * 100 - 19.9) < 0.06, '复算 ' + (pbase.ratio * 100).toFixed(2) + '%');
+
+      // 4) 候选池：两类都有；抽样全部合法
+      var pcands = pctx.candidates();
+      var nRoadC = 0, nGroveC = 0;
+      for (var pc = 0; pc < pcands.length; pc++) {
+        if (pcands[pc].kind === 'road') { nRoadC++; } else { nGroveC++; }
+      }
+      ok('候选池两类都有（行道树位 + 空地），且总量 ≥ 800',
+        pcands.length >= 800 && nRoadC >= 100 && nGroveC >= 100,
+        'total=' + pcands.length + ' road=' + nRoadC + ' grove=' + nGroveC);
+
+      var badCand = 0;
+      for (var pcs = 0; pcs < pcands.length; pcs += Math.max(1, Math.floor(pcands.length / 200))) {
+        if (!pctx.legal(pcands[pcs].x, pcands[pcs].y, pcands[pcs].kind).ok) { badCand++; }
+      }
+      ok('候选点全部合法（抽样 200 个都过 legal，不会推荐一个种不了的点）', badCand === 0, '非法 ' + badCand);
+
+      var bFirst = null;
+      for (var bq = 0; bq < W.DATA_BUILDINGS.length; bq++) {
+        if (W.DATA_BUILDINGS[bq].p && W.DATA_BUILDINGS[bq].p.length >= 3) { bFirst = W.DATA_BUILDINGS[bq]; break; }
+      }
+      var bCx = 0, bCy = 0;
+      for (var bqr = 0; bqr < bFirst.p.length; bqr++) { bCx += bFirst.p[bqr][0]; bCy += bFirst.p[bqr][1]; }
+      bCx /= bFirst.p.length; bCy /= bFirst.p.length;
+      var bLegal = pctx.legal(bCx, bCy, 'grove');
+      ok('楼中心不能种：legal 拒绝并给出原因', !bLegal.ok && !!bLegal.reason, 'reason=' + bLegal.reason);
+
+      // 5) 单棵 / 多棵：量级与单调性
+      // 取最靠校园中心的一个候选：边缘候选的树影会有一大半落在界外，面积天然偏小
+      var pC0 = pcands[0], dC0 = Infinity;
+      for (var pci = 0; pci < pcands.length; pci++) {
+        var ddc = pcands[pci].x * pcands[pci].x + pcands[pci].y * pcands[pci].y;
+        if (ddc < dC0) { dC0 = ddc; pC0 = pcands[pci]; }
+      }
+      var mOne = pctx.measure([pC0], idx1400p);
+      ok('一棵树 14:00 的树荫面积在胶囊量级（80–200 m²，5 m 网格）',
+        mOne.areaM2 >= 80 && mOne.areaM2 <= 200, 'area=' + Math.round(mOne.areaM2) + ' m²');
+      ok('加树后路网阴凉占比只增不减（与建筑阴影取并集，不会重复扣）',
+        mOne.ratio >= pbase.ratio - 1e-12,
+        (pbase.ratio * 100).toFixed(2) + '% → ' + (mOne.ratio * 100).toFixed(2) + '%');
+      var mThree = pctx.measure([pC0, pcands[50], pcands[100]], idx1400p);
+      ok('树越多树荫面积越大（单调）', mThree.areaM2 >= mOne.areaM2,
+        Math.round(mOne.areaM2) + ' → ' + Math.round(mThree.areaM2) + ' m²');
+
+      // 6) 优化器：20 个点、降序、分散、确定、成本自洽
+      var resA = pctx.optimize({ count: 20, areaFrame: idx1400p });
+      var resB = pctx.optimize({ count: 20, areaFrame: idx1400p });
+      ok('优化选出 20 个点位', resA.picks.length === 20, 'picks=' + resA.picks.length + ' pool=' + resA.pool);
+
+      var rankOk = true, gainDesc = true, posGain = true;
+      for (var rk = 0; rk < resA.picks.length; rk++) {
+        if (resA.picks[rk].rank !== rk + 1) { rankOk = false; }
+        if (!(resA.picks[rk].gainMinutes > 0)) { posGain = false; }
+        if (rk > 0 && resA.picks[rk].gainMinutes > resA.picks[rk - 1].gainMinutes + 1e-9) { gainDesc = false; }
+      }
+      ok('排名连续 1..20、边际增益降序、每点增益 > 0', rankOk && gainDesc && posGain);
+
+      var worstGap = Infinity;
+      for (var g1 = 0; g1 < resA.picks.length; g1++) {
+        for (var g2 = g1 + 1; g2 < resA.picks.length; g2++) {
+          var gcdx = resA.picks[g1].x - resA.picks[g2].x, gcdy = resA.picks[g1].y - resA.picks[g2].y;
+          var gd = Math.sqrt(gcdx * gcdx + gcdy * gcdy);
+          if (gd < worstGap) { worstGap = gd; }
+        }
+      }
+      ok('20 个点位两两 ≥ ' + PL.MIN_GAP + ' m（分散到多个片区，不挤在一条路上）',
+        worstGap >= PL.MIN_GAP - 1e-6, '实际最小 ' + worstGap.toFixed(1) + ' m');
+
+      var samePick = resA.picks.length === resB.picks.length;
+      if (samePick) {
+        for (var sp = 0; sp < resA.picks.length; sp++) {
+          if (resA.picks[sp].x !== resB.picks[sp].x || resA.picks[sp].y !== resB.picks[sp].y) { samePick = false; }
+        }
+      }
+      ok('优化是确定性的（同样输入两次，20 个点位逐个相同）', samePick);
+
+      var wantWan = 20 * PL.COST_PER_TREE / 10000;
+      ok('成本换算自洽：预算 = 20 × 单价、每万元 = 总分钟 ÷ 万元数',
+        Math.abs(resA.budgetWan - wantWan) < 1e-9 &&
+        Math.abs(resA.perWanMinutes - resA.totalMinutes / wantWan) < 1e-9 &&
+        resA.costYuan === 20 * PL.COST_PER_TREE,
+        '预算 ' + resA.budgetWan + ' 万元 · ' + resA.perWanMinutes.toFixed(2) + ' 分/万元');
+
+      var dayOne = pctx.measureDay([resA.picks[0]]).minutes;
+      ok('单棵回归：measureDay(单棵) = 优化器给的边际（±0.02 分）',
+        Math.abs(dayOne - resA.picks[0].gainMinutes) < 0.02,
+        dayOne.toFixed(3) + ' vs ' + resA.picks[0].gainMinutes.toFixed(3));
+
+      var dayAll = pctx.measureDay(resA.picks).minutes;
+      ok('20 棵并集 = 优化器总计（±0.05 分，重叠没有重复计数）',
+        Math.abs(dayAll - resA.totalMinutes) < 0.05,
+        dayAll.toFixed(3) + ' vs ' + resA.totalMinutes.toFixed(3));
+
+      // 7) 持久化 / 描述
+      var rawPlan = PL.serialize([{ x: 1.23, y: 4.56 }, { x: 7, y: 8 }]);
+      var backPlan = PL.parse(rawPlan);
+      ok('规划结果能存能读（localStorage 序列化 roundtrip）',
+        backPlan.length === 2 && backPlan[0].x === 1.2 && backPlan[0].y === 4.6 &&
+        backPlan[1].x === 7 && backPlan[1].y === 8);
+      ok('坏存档不会炸（乱码 / 空串都返回空数组）',
+        PL.parse('{oops').length === 0 && PL.parse('').length === 0 && PL.parse(null).length === 0);
+
+      ok('点位描述带方位（"xx楼东侧 30 m" 或"空地（x, y）"）',
+        /侧 |空地/.test(PL.describe(resA.picks[0].x, resA.picks[0].y, W.DATA_BUILDINGS)),
+        PL.describe(resA.picks[0].x, resA.picks[0].y, W.DATA_BUILDINGS));
+
+      var psrc = stripComments(read('js/plan.js'));
+      ok('plan.js 不写 data/*、不碰网络与 DOM（纯计算层）',
+        psrc.indexOf('DATA_SHADOWS') < 0 && psrc.indexOf('DATA_ROUTES') < 0 &&
+        psrc.indexOf('fetch(') < 0 && psrc.indexOf('document.') < 0 &&
+        psrc.indexOf('localStorage') < 0);
+    }
+
+    // 8) 页面接线：页签、面板、口径声明
+    ok('页面有「种树规划」页签与面板（tab-plan / pane-plan / 优化按钮）',
+      html.indexOf('id="tab-plan"') >= 0 && html.indexOf('id="pane-plan"') >= 0 &&
+      html.indexOf('id="plan-optimize"') >= 0 && html.indexOf('id="plan-rank"') >= 0);
+    ok('页面明说：含树指标不进官方口径（防"两个数字"被问穿）',
+      html.indexOf('不进') >= 0 && html.indexOf('官方「阴凉 %」') >= 0);
+    ok('styles.css 有规划面板样式（页签 / 三数字 / 排名表）',
+      read('styles.css').indexOf('.plan-metrics') >= 0 &&
+      read('styles.css').indexOf('.plan-rank') >= 0 &&
+      read('styles.css').indexOf('.tab.is-on') >= 0);
 
     /* --- 校门（道路 × 校园边界的交点，不是手工塞的坐标） --- */
     var gatesA = CORE.gatesFromRoads(W.DATA_BASEMAP.roads, W.DATA_META.campus.ring);
@@ -1463,6 +1657,95 @@ if (!jsLoadErr && !initErr && W.ROUTER && W.ROUTER.ready() && anchors.length > 2
   console.log('崩溃前已完成断言：PASS ' + pass + ' / FAIL ' + (fail - 1));
   console.log('提示：先确认数据完整（python tools/build.py all），再跑 node tools/smoke.js。');
 }
+
+/* ---------- 2.11 规划模式集成冒烟（stub DOM 真点一遍） ---------- */
+/* ---------- 2.10 规划模式集成冒烟：页签 / 点种 / 撤销 / 优化 / 一键全种 / 视图互斥 ----------
+   沙箱没有浏览器，所以这里用同一个 stub DOM 真点一遍：
+   tab-plan → 地图点一下种树 → 撤销 → 优化（setTimeout 打平）→ 一键全种 → 切立体会被拦。 */
+(function () {
+  var plTabsOk = !!(registry['tab-plan'] && registry['pane-plan'] && registry['plan-optimize']);
+  ok('规划面板元素都在 stub DOM 里（页签 / 面板 / 4 个按钮）',
+    plTabsOk && !!(registry['plan-plant-all'] && registry['plan-undo'] && registry['plan-clear'] &&
+      registry['plan-rank'] && registry['plan-msg']));
+  if (!plTabsOk) { return; }
+
+  var planMap = W.MAP;
+  var canvasEl = registry['map'];
+  var baseArcs0 = (canvasEl._ctx && canvasEl._ctx.calls.arc) || 0;
+
+  // 1) 切到「种树规划」页签：面板显示、路线面板隐藏
+  registry['tab-plan'].dispatch('click', { type: 'click' });
+  ok('点「种树规划」页签：规划面板显示、路线面板隐藏、页签高亮',
+    registry['pane-plan'].hidden === false && registry['pane-route'].hidden === true &&
+    String(registry['tab-plan'].className).indexOf('is-on') >= 0 &&
+    String(registry['tab-route'].className).indexOf('is-on') < 0);
+
+  // 2) 在地图上点一个合法候选点 → 种下一棵
+  var scr = planMap.toScreen(pC0.x, pC0.y);
+  canvasEl.dispatch('click', { type: 'click', clientX: scr[0], clientY: scr[1] });
+  ok('规划模式下点地图空地 → 种下 1 棵（面板计数与花费同步）',
+    registry['plan-count'].textContent === '1 棵' &&
+    registry['plan-cost'].textContent === '3,000' &&
+    Number(registry['plan-area'].textContent) > 0,
+    'count=' + registry['plan-count'].textContent + ' area=' + registry['plan-area'].textContent + ' m²');
+
+  // 3) 撤销 → 回到 0 棵
+  registry['plan-undo'].dispatch('click', { type: 'click' });
+  ok('点「撤销」→ 回到 0 棵（快照栈真的存了上一状态）',
+    registry['plan-count'].textContent === '0 棵' && Number(registry['plan-area'].textContent) === 0);
+
+  // 4) 优化：stub 的 setTimeout 打平，同步跑完
+  registry['plan-optimize'].dispatch('click', { type: 'click' });
+  var rankLis = registry['plan-rank'].children || [];
+  ok('点「优化」→ 出 20 个点位、排名表 20 行、一键全种按钮解锁',
+    rankLis.length === 20 && registry['plan-plant-all'].disabled === false &&
+    String(registry['plan-msg'].textContent).indexOf('每万元') >= 0,
+    'rows=' + rankLis.length + ' msg=' + String(registry['plan-msg'].textContent).slice(0, 40));
+
+  // 5) 一键全种 → 20 棵、6 万元，画布上真的多画了 20 个蓝圈
+  var arcsBeforePlant = (canvasEl._ctx.calls.arc || 0);
+  registry['plan-plant-all'].dispatch('click', { type: 'click' });
+  var arcsAfterPlant = (canvasEl._ctx.calls.arc || 0);
+  ok('点「一键全种下」→ 20 棵 / 6 万元，且画布上真画了 20 个规划树圆圈',
+    registry['plan-count'].textContent === '20 棵' &&
+    registry['plan-cost'].textContent === '60,000' &&
+    (arcsAfterPlant - arcsBeforePlant) >= 20,
+    'count=' + registry['plan-count'].textContent + ' 新增 arc=' + (arcsAfterPlant - arcsBeforePlant));
+
+  ok('种下 20 棵后面板三个数字都成了真实值（面积 / 占比 / 分钟）',
+    Number(registry['plan-area'].textContent) > 0 &&
+    parseFloat(registry['plan-ratio'].textContent) >= 19.9 &&
+    parseFloat(registry['plan-minutes'].textContent) > 0,
+    'area=' + registry['plan-area'].textContent + ' ratio=' + registry['plan-ratio'].textContent +
+    '% minutes=' + registry['plan-minutes'].textContent);
+
+  // 6) 规划模式下切立体：必须被拦住（树影/拖拽都对不上）
+  registry['view-iso'].dispatch('click', { type: 'click' });
+  ok('规划模式下点「立体」被拦住：仍是平面视图，并给出提示（不静默失效）',
+    planMap.isIso() === false && String(registry['plan-msg'].textContent).indexOf('平面') >= 0,
+    'iso=' + planMap.isIso() + ' msg=' + String(registry['plan-msg'].textContent).slice(0, 30));
+
+  // 7) 切回「路线对比」：规划面板收起，地图不再画规划层
+  // 地图重画本来就会画 520 棵装饰树（每棵 2 个圆）+ 2 个起终点 + 每扇门 2 个圆；
+  // "没画规划层"的判据是：这次重画的 arc 数正好等于纯路线视图该有的数，没有多出 20 个规划树圆。
+  var gateArcsDom = CORE.gatesFromRoads(W.DATA_BASEMAP.roads, W.DATA_META.campus.ring).length * 2;
+  var expectPlainArcs = treesA.length * 2 + 2 + gateArcsDom;
+  var arcsBeforeRoute = (canvasEl._ctx.calls.arc || 0);
+  registry['tab-route'].dispatch('click', { type: 'click' });
+  var arcsAfterRoute = (canvasEl._ctx.calls.arc || 0);
+  ok('切回「路线对比」→ 规划面板收起、不再画规划树（只画纯路线视图该有的圆）',
+    registry['pane-route'].hidden === false && registry['pane-plan'].hidden === true &&
+    (arcsAfterRoute - arcsBeforeRoute) === expectPlainArcs,
+    '新增 arc=' + (arcsAfterRoute - arcsBeforeRoute) + '，期望 ' + expectPlainArcs);
+
+  // 8) 清空：回到 0 棵
+  registry['tab-plan'].dispatch('click', { type: 'click' });
+  registry['plan-clear'].dispatch('click', { type: 'click' });
+  ok('点「清空」→ 0 棵、0 元、排名表收起',
+    registry['plan-count'].textContent === '0 棵' &&
+    registry['plan-cost'].textContent === '0' &&
+    registry['plan-rank-block'].hidden === true);
+})();
 
 /* ---------- 3. 汇总 ---------- */
 console.log('--------------------------------------------------');

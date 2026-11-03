@@ -18,6 +18,11 @@
       <p class="place" id="place">中山大学 · 广州南校园</p>
     </header>
 
+    <nav class="tabs" role="tablist" aria-label="面板切换">
+      <button type="button" class="tab is-on" id="tab-route" role="tab" aria-selected="true">路线对比</button>
+      <button type="button" class="tab" id="tab-plan" role="tab" aria-selected="false">种树规划<em>新</em></button>
+    </nav>
+
     <!-- 时间滑块 -->
     <section class="block">
       <div class="block-head">
@@ -31,6 +36,8 @@
       </div>
       <p class="hint" id="sun-hint"></p>
     </section>
+
+    <div id="pane-route">
 
     <!-- 起终点 -->
     <section class="block">
@@ -82,6 +89,63 @@
       <p class="delta" id="delta" role="status" aria-live="polite">--</p>
     </section>
 
+    </div><!-- /#pane-route -->
+
+    <!-- 治理侧：种树规划（沙箱） -->
+    <div id="pane-plan" hidden>
+
+      <section class="block">
+        <div class="block-head">
+          <h2>种树规划（沙箱）</h2>
+          <output id="plan-count">0 棵</output>
+        </div>
+        <p class="hint">点空地种树，拖动微调，右键删除。含树指标只用于规划演算，<b>不进</b>官方「阴凉 %」（官方数字仍只算建筑阴影）。</p>
+
+        <div class="plan-metrics">
+          <div class="pm"><b id="plan-area">0</b><span>m² 树荫面积（当前帧）</span></div>
+          <div class="pm"><b id="plan-ratio">--</b><span>% 路网阴凉（含树）</span></div>
+          <div class="pm"><b id="plan-minutes">0.0</b><span>分钟 阴凉路段（当前帧）</span></div>
+        </div>
+
+        <div class="plan-cost">
+          <span>已投入 <b id="plan-cost">0</b> 元 · <b id="plan-wan">0.0</b> 万元</span>
+          <span id="plan-baseline">--</span>
+        </div>
+
+        <div class="plan-actions">
+          <button type="button" class="act act-primary" id="plan-optimize">优化：选 20 个点位</button>
+          <button type="button" class="act" id="plan-plant-all" disabled>一键全种下</button>
+          <button type="button" class="act" id="plan-undo" disabled>撤销</button>
+          <button type="button" class="act" id="plan-clear" disabled>清空</button>
+        </div>
+
+        <div class="plan-progress" id="plan-progress" hidden>
+          <i id="plan-progress-bar"></i><span id="plan-progress-text">0 / 20</span>
+        </div>
+        <p class="delta" id="plan-msg" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="block" id="plan-rank-block" hidden>
+        <div class="block-head">
+          <h2>性价比排名</h2>
+          <output id="plan-rank-sum">--</output>
+        </div>
+        <ol class="plan-rank" id="plan-rank"></ol>
+        <p class="hint" id="plan-rank-note"></p>
+      </section>
+
+      <section class="block">
+        <h2>口径</h2>
+        <ul class="notes">
+          <li>单价 ¥3,000/株（含 3 年养护）为<b>假设值</b>，20 株 = 6 万元；改 <code>js/plan.js</code> 的 <code>COST_PER_TREE</code> 即可。</li>
+          <li>树影 = 树冠圆（半径 4 m）沿太阳反方向平移 L = h / tan(高度角)，与建筑阴影同一套几何、同一帧。</li>
+          <li>面积按 5 m 网格统计；路网占比按边长加权（每米等权），用的是算路那同一份 613 条边。</li>
+          <li>优化 = 贪心边际增益（覆盖函数子模，1−1/e 保证）+ 两两 ≥ 30 m 分散约束。</li>
+        </ul>
+      </section>
+
+    </div><!-- /#pane-plan -->
+
     <!-- 数据说明 -->
     <section class="block">
       <h2>数据说明</h2>
@@ -128,6 +192,7 @@
 <script src="content/strings.js"></script>
 <script src="js/core.js"></script>
 <script src="js/trees.js"></script>
+<script src="js/plan.js"></script>
 <script src="js/iso.js"></script>
 <script src="js/proj.js"></script>
 <script src="js/router.js"></script>

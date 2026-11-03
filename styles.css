@@ -532,3 +532,192 @@ footer p { margin: 0; }
   margin: 2px 0 0;
   opacity: 0.8;
 }
+
+/* ============================================================
+   治理侧：种树规划（面 2）
+   ============================================================ */
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  flex: 1 1 0;
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 6px;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab.is-on {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+.tab em {
+  font-style: normal;
+  font-size: 10px;
+  margin-left: 4px;
+  padding: 1px 4px;
+  border-radius: 6px;
+  background: rgba(232, 138, 42, 0.18);
+  color: #f2a65a;
+  vertical-align: 1px;
+}
+.tab:focus-visible { outline: 2px solid #4f8fd1; outline-offset: 1px; }
+
+.plan-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+.plan-metrics .pm {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 6px;
+  text-align: center;
+}
+.pm b {
+  display: block;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.pm span {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  line-height: 1.3;
+}
+
+.plan-cost {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.plan-cost b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.plan-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.act {
+  appearance: none;
+  font: inherit;
+  font-size: 12.5px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  cursor: pointer;
+}
+.act:hover:not(:disabled) { border-color: #3d4a5f; }
+.act:disabled { opacity: 0.45; cursor: not-allowed; }
+.act-primary {
+  grid-column: 1 / -1;
+  background: linear-gradient(180deg, #2f7bbd, #245f93);
+  border-color: #2f7bbd;
+  font-weight: 600;
+}
+.act-primary:disabled { background: var(--panel-2); }
+
+.plan-progress {
+  position: relative;
+  height: 8px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.plan-progress i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #f2a65a, #ffd166);
+  transition: width 0.12s linear;
+}
+.plan-progress span {
+  position: absolute;
+  right: 6px;
+  top: -16px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.plan-rank {
+  list-style: none;
+  margin: 10px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.plan-rank li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  grid-template-areas: "no name gain" "no name per";
+  column-gap: 8px;
+  row-gap: 1px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.plan-rank li i {
+  grid-area: no;
+  font-style: normal;
+  font-size: 11px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(232, 138, 42, 0.18);
+  color: #f2a65a;
+  font-variant-numeric: tabular-nums;
+}
+.plan-rank li b {
+  grid-area: name;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.plan-rank li span {
+  grid-area: gain;
+  font-size: 11.5px;
+  color: var(--cool);
+  font-variant-numeric: tabular-nums;
+}
+.plan-rank li em {
+  grid-area: per;
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+#pane-plan code {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0 3px;
+  border-radius: 4px;
+}

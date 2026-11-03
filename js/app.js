@@ -27,7 +27,19 @@ window.APP = (function () {
     toName: '',
     pickNext: 'from',  // 下一次地图点击设起点还是终点
     routeMsg: '',      // 算不出路线时的提示
-    ready: false
+    ready: false,
+    // ---- 治理侧：种树规划（面 2）----
+    planMode: false,       // 是否在「种树规划」页签
+    planTrees: [],         // 已种的规划树 [{x,y,r,h,legal}]
+    planPending: [],       // 优化推荐的待种点位 [{x,y,rank,gainMinutes,desc}]
+    planOptimized: null,   // 上一次优化的完整结果
+    planUndo: [],          // 撤销栈（JSON 快照）
+    planCtx: null,         // PLAN.makeContext() 的结果
+    planBusy: false,       // 优化计算中
+    planLoaded: false,     // 本地存档是否已读
+    planDragIdx: -1,       // 正在拖第几棵
+    planDragMoved: false,  // 这次拖动是否真的移动过
+    planJustDragged: false // 刚拖完：随后的 click 不要当成"再种一棵"
   };
 
   var el = {};
@@ -206,7 +218,13 @@ window.APP = (function () {
       campusRing: (META.campus && META.campus.ring) || null,
       basemap: BASEMAP,
       trees: treeList(),
-      gates: gateList()
+      gates: gateList(),
+      plan: {
+        active: state.planMode,
+        trees: state.planTrees,
+        pending: state.planPending,
+        shadow: true
+      }
     });
 
     // ---- 顶部时间与太阳 ----
@@ -240,12 +258,20 @@ window.APP = (function () {
     if (el.routeTag) {
       el.routeTag.textContent = cur.live ? '现场计算' : '预计算';
     }
+
+    // 规划页签的数字：只在规划模式刷新（measure 是毫秒级但没必要每帧都算）
+    if (state.planMode) { updatePlanPanel(); }
   }
 
   /* ---------- 平面 / 立体视图 ----------
      立体视图 = 2.5D 体块（几何在 js/iso.js，画法在 js/map.js），
      零依赖、不联网、不读模型文件。这里只负责按钮状态与指北针。 */
   function setViewIso(on) {
+    // 规划模式只支持平面视图：切立体先拦一下（否则树影与拖拽命中都对不上）
+    if (on && state.planMode) {
+      planSay(PLAN_TAB_NOTE);
+      return;
+    }
     var iso = false;
     if (window.MAP && window.MAP.setIso) { iso = !!window.MAP.setIso(!!on); }
     syncViewButtons(iso);
@@ -283,6 +309,14 @@ window.APP = (function () {
     if (el.viewPlan) { el.viewPlan.addEventListener('click', function () { setViewIso(false); }); }
     if (el.viewIso) { el.viewIso.addEventListener('click', function () { setViewIso(true); }); }
 
+    // ---- 治理侧：种树规划 ----
+    if (el.tabRoute) { el.tabRoute.addEventListener('click', function () { planSetMode(false); }); }
+    if (el.tabPlan) { el.tabPlan.addEventListener('click', function () { planSetMode(true); }); }
+    if (el.planOptimize) { el.planOptimize.addEventListener('click', planOptimize); }
+    if (el.planPlantAll) { el.planPlantAll.addEventListener('click', planPlantAll); }
+    if (el.planUndo) { el.planUndo.addEventListener('click', planUndoLast); }
+    if (el.planClear) { el.planClear.addEventListener('click', planClear); }
+
     el.startSelect.addEventListener('change', function () {
       var a = anchorAt(parseInt(this.value, 10));
       if (a) { setEndpoint('from', [a.x, a.y], a.name); }
@@ -295,7 +329,53 @@ window.APP = (function () {
     // 地图点选：第一下起点，第二下终点，之后循环
     var canvas = el.canvas;
     if (canvas) {
+      // 规划模式：按下已有树 = 开始拖；拖完的 click 不再种新树
+      canvas.addEventListener('pointerdown', function (ev) {
+        if (!state.planMode) { return; }
+        var p = planPx(ev);
+        var idx = planTreeAt(p[0], p[1]);
+        if (idx < 0) { return; }
+        planSnapshot();
+        state.planDragIdx = idx;
+        state.planDragMoved = false;
+        if (canvas.setPointerCapture) { try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* 老浏览器 */ } }
+      });
+      canvas.addEventListener('pointermove', function (ev) {
+        if (!state.planMode || state.planDragIdx < 0) { return; }
+        var t = state.planTrees[state.planDragIdx];
+        var pw = planWorld(ev);
+        if (!t || !pw) { return; }
+        t.x = Math.round(pw[0] * 10) / 10;
+        t.y = Math.round(pw[1] * 10) / 10;
+        var pctx = planCtx();
+        t.legal = pctx ? pctx.legal(t.x, t.y, t.kind || 'road').ok : true;
+        state.planDragMoved = true;
+        render();
+      });
+      canvas.addEventListener('pointerup', function () {
+        if (state.planDragIdx < 0) { return; }
+        state.planDragIdx = -1;
+        if (state.planDragMoved) {
+          state.planJustDragged = true;   // 紧接着的 click 不要当成"再种一棵"
+          planRevalidate();
+          planSave();
+          planRefresh();
+        }
+      });
+      canvas.addEventListener('contextmenu', function (ev) {
+        if (!state.planMode) { return; }
+        ev.preventDefault();
+        var p = planPx(ev);
+        planDeleteAt(p[0], p[1]);
+      });
+
       canvas.addEventListener('click', function (ev) {
+        if (state.planMode) {
+          if (state.planJustDragged) { state.planJustDragged = false; return; }
+          var pw = planWorld(ev);
+          if (pw) { planPlace(pw[0], pw[1]); }
+          return;
+        }
         if (!window.MAP || !window.MAP.toWorld) { return; }
         var rect = canvas.getBoundingClientRect();
         var p = window.MAP.toWorld(ev.clientX - rect.left, ev.clientY - rect.top);
@@ -321,6 +401,13 @@ window.APP = (function () {
       // V：平面 / 立体视图来回切（演示时按一个键就行）
       if (e.key === 'v' || e.key === 'V') {
         setViewIso(!(window.MAP && window.MAP.isIso && window.MAP.isIso()));
+      }
+      // P：路线 / 种树规划 页签来回切
+      if (e.key === 'p' || e.key === 'P') { planSetMode(!state.planMode); }
+      // Ctrl/Cmd + Z：撤销（只在规划模式下拦）
+      if (state.planMode && (e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        planUndoLast();
       }
     });
   }
@@ -460,6 +547,327 @@ window.APP = (function () {
     }
   }
 
+/* ================= 治理侧：种树规划（面 2） =================
+     口径（已冻结，README §7.13）：
+       - 官方「阴凉 % / 少晒 x 分钟」仍然只算建筑阴影，本模块一个字都不改它；
+       - 这里所有数字都是"规划演算"，面板上明确标注；
+       - 计算全在 js/plan.js（纯函数，smoke 可直接测），本段只管状态、DOM 与指针交互。 */
+
+  function planAPI() { return window.PLAN || null; }
+
+  /* 规划上下文：建筑/水/路/边界/路网 + 已有装饰树（当碰撞体），只构建一次 */
+  function planCtx() {
+    if (state.planCtx) { return state.planCtx; }
+    var P = planAPI();
+    if (!P) { return null; }
+    try {
+      state.planCtx = P.makeContext({
+        buildings: BUILDINGS,
+        water: (BASEMAP && BASEMAP.water) || [],
+        roads: (BASEMAP && BASEMAP.roads) || [],
+        campusRing: (META.campus && META.campus.ring) || null,
+        frames: META.frames || [],
+        bbox: META.bbox_m || null,
+        graph: GRAPH,
+        blockers: treeList()
+      });
+    } catch (e) {
+      state.planCtx = null;
+      planSay('规划模块初始化失败：' + (e && e.message ? e.message : e));
+    }
+    return state.planCtx;
+  }
+
+  function planSay(text) { if (el.planMsg) { el.planMsg.textContent = text || ''; } }
+
+  function planSnapshot() {
+    var snap = [];
+    for (var i = 0; i < state.planTrees.length; i++) { snap.push([state.planTrees[i].x, state.planTrees[i].y]); }
+    state.planUndo.push(JSON.stringify(snap));
+    if (state.planUndo.length > 40) { state.planUndo.shift(); }
+    if (el.planUndo) { el.planUndo.disabled = false; }
+  }
+
+  /* 从 [[x,y],...] 恢复规划树（撤销 / 读本地存档共用） */
+  function planRestoreList(list) {
+    var P = planAPI();
+    if (!P) { return; }
+    state.planTrees = [];
+    for (var i = 0; i < list.length; i++) {
+      state.planTrees.push({ x: list[i][0], y: list[i][1], r: P.TREE_R, h: P.TREE_H, kind: 'road', legal: true });
+    }
+    planRevalidate();
+    planSave();
+    planRefresh();
+  }
+
+  /* 重新判定每棵树的合法性（拖动后 / 载入后）：非法的不计入统计，地图上显红。
+     按树自己的来路判定：行道树位允许离楼 2 m，空地树要 6 m（见 plan.js 的 legal） */
+  function planRevalidate() {
+    var ctx = planCtx();
+    for (var i = 0; i < state.planTrees.length; i++) {
+      var t = state.planTrees[i];
+      t.legal = ctx ? ctx.legal(t.x, t.y, t.kind || 'road').ok : true;
+    }
+  }
+
+  /* localStorage 持久化：file:// 下部分浏览器会禁，禁了就静默降级成内存 */
+  function planSave() {
+    var P = planAPI();
+    if (!P) { return; }
+    try { window.localStorage.setItem(P.STORE_KEY, P.serialize(state.planTrees)); } catch (e) { /* 忽略 */ }
+  }
+
+  function planLoad() {
+    if (state.planLoaded) { return; }
+    state.planLoaded = true;
+    var P = planAPI();
+    if (!P) { return; }
+    var list = [];
+    try { list = P.parse(window.localStorage.getItem(P.STORE_KEY)); } catch (e) { list = []; }
+    if (!list.length) { return; }
+    var out = [];
+    for (var i = 0; i < list.length; i++) { out.push([list[i].x, list[i].y]); }
+    planRestoreList(out);
+  }
+
+  /* 页签切换 */
+  function planSetMode(on) {
+    state.planMode = !!on;
+    if (el.tabRoute) {
+      el.tabRoute.className = 'tab' + (state.planMode ? '' : ' is-on');
+      el.tabRoute.setAttribute('aria-selected', state.planMode ? 'false' : 'true');
+    }
+    if (el.tabPlan) {
+      el.tabPlan.className = 'tab' + (state.planMode ? ' is-on' : '');
+      el.tabPlan.setAttribute('aria-selected', state.planMode ? 'true' : 'false');
+    }
+    if (el.paneRoute) { el.paneRoute.hidden = state.planMode; }
+    if (el.panePlan) { el.panePlan.hidden = !state.planMode; }
+    if (state.planMode) {
+      // 规划只在平面视图：从立体进来就先退回平面
+      if (window.MAP && window.MAP.isIso && window.MAP.isIso()) { setViewIso(false); }
+      planCtx();
+      planLoad();
+      planRevalidate();
+      planSay(state.planTrees.length
+        ? '已载入上次的 ' + state.planTrees.length + ' 棵树（可撤销 / 清空）。'
+        : '点地图空地种树；点「优化」让系统挑 20 个最划算的点位。');
+    }
+    render();
+  }
+
+  /* 当前帧的三个数字：树荫面积 / 路网阴凉占比（含树）/ 阴凉路段分钟 */
+  function planMetrics() {
+    var ctx = planCtx();
+    if (!ctx) { return null; }
+    return { cur: ctx.measure(state.planTrees, state.frame), base: ctx.measure([], state.frame) };
+  }
+
+  var PLAN_TAB_NOTE = '规划模式只在平面视图：先点「平面」或切回「路线对比」页签。';
+
+  function updatePlanPanel() {
+    var P = planAPI();
+    var n = state.planTrees.length;
+    var trees = n * (P ? P.COST_PER_TREE : 3000);
+    if (el.planCount) { el.planCount.textContent = n + ' 棵'; }
+    if (el.planCost) { el.planCost.textContent = trees.toLocaleString('zh-CN'); }
+    if (el.planWan) { el.planWan.textContent = (trees / 10000).toFixed(1); }
+
+    var m = planMetrics();
+    if (m) {
+      if (el.planArea) { el.planArea.textContent = String(Math.round(m.cur.areaM2)); }
+      if (el.planRatio) { el.planRatio.textContent = (m.cur.ratio * 100).toFixed(1); }
+      if (el.planMinutes) { el.planMinutes.textContent = m.cur.minutes.toFixed(1); }
+      if (el.planBaseline) {
+        el.planBaseline.textContent = '建筑阴影基线 ' + (m.base.ratio * 100).toFixed(1) + '%';
+      }
+    }
+    if (el.planUndo) { el.planUndo.disabled = !state.planUndo.length; }
+    if (el.planClear) { el.planClear.disabled = n === 0 && !state.planPending.length; }
+    if (el.planPlantAll) { el.planPlantAll.disabled = !state.planPending.length; }
+  }
+
+  /* 规划面板改动后统一重画（地图 + 面板） */
+  function planRefresh() {
+    render();
+    if (state.planMode) { updatePlanPanel(); }
+  }
+
+  /* ---------- 指针交互 ---------- */
+
+  function planPx(ev) {
+    var canvas = el.canvas;
+    var rect = canvas.getBoundingClientRect();
+    return [ev.clientX - rect.left, ev.clientY - rect.top];
+  }
+
+  /* 屏幕命中：14 px 内算点中某棵规划树 */
+  function planTreeAt(sx, sy) {
+    if (!window.MAP || !window.MAP.toScreen) { return -1; }
+    var best = -1, bestD = 14;
+    for (var i = 0; i < state.planTrees.length; i++) {
+      var s = window.MAP.toScreen(state.planTrees[i].x, state.planTrees[i].y);
+      if (!s) { continue; }
+      var d = Math.sqrt(Math.pow(s[0] - sx, 2) + Math.pow(s[1] - sy, 2));
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function planWorld(ev) {
+    var canvas = el.canvas;
+    if (!canvas || !window.MAP || !window.MAP.toWorld) { return null; }
+    var p = planPx(ev);
+    return window.MAP.toWorld(p[0], p[1]);
+  }
+
+  function planPlace(wx, wy) {
+    var ctx = planCtx(), P = planAPI();
+    if (!ctx || !P) { return; }
+    // 手动种的树按「行道树」那套较宽的规则判（离楼 2 m 即可）：校园里贴墙补一行树是常规做法
+    var legal = ctx.legal(wx, wy, 'road');
+    if (!legal.ok) { planSay('这里种不了：' + legal.reason + '。'); return; }
+    planSnapshot();
+    state.planTrees.push({
+      x: Math.round(wx * 10) / 10, y: Math.round(wy * 10) / 10,
+      r: P.TREE_R, h: P.TREE_H, kind: 'road', legal: true
+    });
+    state.planPending = [];
+    planSave();
+    planRefresh();
+    planSay('种下第 ' + state.planTrees.length + ' 棵（' + P.COST_PER_TREE.toLocaleString('zh-CN') + ' 元）。');
+  }
+
+  function planDeleteAt(sx, sy) {
+    var idx = planTreeAt(sx, sy);
+    if (idx < 0) { return; }
+    planSnapshot();
+    state.planTrees.splice(idx, 1);
+    planSave();
+    planRefresh();
+    planSay('删掉一棵，剩 ' + state.planTrees.length + ' 棵。');
+  }
+
+  function planUndoLast() {
+    if (!state.planUndo.length) { return; }
+    var raw = state.planUndo.pop();
+    var list = [];
+    try { list = JSON.parse(raw) || []; } catch (e) { list = []; }
+    planRestoreList(list);
+    planSay('已撤销。');
+  }
+
+  function planClear() {
+    if (!state.planTrees.length && !state.planPending.length) { return; }
+    planSnapshot();
+    state.planTrees = [];
+    state.planPending = [];
+    state.planOptimized = null;
+    if (el.planRankBlock) { el.planRankBlock.hidden = true; }
+    if (el.planRank) { el.planRank.innerHTML = ''; }
+    planSave();
+    planRefresh();
+    planSay('已清空。');
+  }
+
+  /* ---------- 优化：选 20 个「每万元遮阴分钟」最高的点位 ---------- */
+  function planOptimize() {
+    var ctx = planCtx();
+    if (!ctx || state.planBusy) { return; }
+    state.planBusy = true;
+    if (el.planOptimize) { el.planOptimize.disabled = true; }
+    if (el.planProgress) { el.planProgress.hidden = false; }
+    if (el.planProgressBar) { el.planProgressBar.style.width = '0%'; }
+    if (el.planProgressText) { el.planProgressText.textContent = '0 / 20'; }
+    planSay('正在跑 31 帧 × 候选池……');
+    var t0 = (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+
+    // 先让浏览器把「计算中」画出来，再同步算（实测约 0.2 s，桌面上不用 Worker）
+    window.setTimeout(function () {
+      var res = null;
+      try {
+        res = ctx.optimize({
+          count: 20,
+          areaFrame: state.frame,
+          onProgress: function (k, n) {
+            if (el.planProgressBar) { el.planProgressBar.style.width = (k / n * 100).toFixed(0) + '%'; }
+            if (el.planProgressText) { el.planProgressText.textContent = k + ' / ' + n; }
+          }
+        });
+      } catch (e) {
+        planSay('优化失败：' + (e && e.message ? e.message : e));
+      }
+      var ms = ((window.performance && window.performance.now) ? window.performance.now() : Date.now()) - t0;
+      state.planBusy = false;
+      if (el.planOptimize) { el.planOptimize.disabled = false; }
+      if (el.planProgress) { el.planProgress.hidden = true; }
+
+      if (!res || !res.picks.length) { planSay('没找到有效点位（数据异常？）。'); return; }
+      state.planOptimized = res;
+      var P = planAPI();
+      state.planPending = [];
+      for (var i = 0; i < res.picks.length; i++) {
+        var p = res.picks[i];
+        state.planPending.push({
+          x: p.x, y: p.y, rank: p.rank, gainMinutes: p.gainMinutes, kind: p.kind,
+          desc: P.describe(p.x, p.y, BUILDINGS)
+        });
+      }
+      planRenderRank(res);
+      planRefresh();
+      planSay('选出 ' + res.picks.length + ' 个点位：日累计 +' + res.totalMinutes.toFixed(0) +
+        ' 分钟阴凉路段，每万元 ' + res.perWanMinutes.toFixed(1) + ' 分钟（' + Math.round(ms) + ' ms 算完）。');
+    }, 30);
+  }
+
+  function planRenderRank(res) {
+    if (!el.planRank) { return; }
+    el.planRank.innerHTML = '';
+    var perWanEach = (planAPI() ? planAPI().COST_PER_TREE : 3000) / 10000;
+    for (var i = 0; i < res.picks.length; i++) {
+      var p = res.picks[i];
+      var li = document.createElement('li');
+      var no = document.createElement('i');
+      no.textContent = String(p.rank);
+      var nm = document.createElement('b');
+      nm.textContent = p.desc || planAPI().describe(p.x, p.y, BUILDINGS);
+      var gm = document.createElement('span');
+      gm.textContent = '+' + p.gainMinutes.toFixed(1) + ' 分/日';
+      var pw = document.createElement('em');
+      pw.textContent = (p.gainMinutes / perWanEach).toFixed(1) + ' 分/万元';
+      li.appendChild(no); li.appendChild(nm); li.appendChild(gm); li.appendChild(pw);
+      el.planRank.appendChild(li);
+    }
+    if (el.planRankBlock) { el.planRankBlock.hidden = false; }
+    if (el.planRankSum) {
+      el.planRankSum.textContent = '合计 +' + res.totalMinutes.toFixed(0) + ' 分/日 · ' + res.budgetWan.toFixed(0) + ' 万元';
+    }
+    if (el.planRankNote) {
+      el.planRankNote.textContent = '每万元 = 日累计阴凉分钟 ÷ ' + res.budgetWan.toFixed(1) +
+        ' 万元；按边际增益排序，两两 ≥ 30 m。点「一键全种下」后可继续逐棵拖动调位置。';
+    }
+  }
+
+  function planPlantAll() {
+    if (!state.planPending.length) { return; }
+    var P = planAPI(), ctx = planCtx();
+    if (!P) { return; }
+    planSnapshot();
+    var added = 0;
+    for (var i = 0; i < state.planPending.length; i++) {
+      var p = state.planPending[i];
+      // 按点位自己的来路判（行道树位 / 空地两套规则不同，见 plan.js 的 legal）
+      if (ctx && !ctx.legal(p.x, p.y, p.kind || 'road').ok) { continue; }
+      state.planTrees.push({ x: p.x, y: p.y, r: P.TREE_R, h: P.TREE_H, kind: p.kind || 'road', legal: true });
+      added++;
+    }
+    state.planPending = [];
+    planSave();
+    planRefresh();
+    planSay('种下 ' + added + ' 棵，现在可以逐棵拖动对比。');
+  }
+
   /* ---------- 初始化 ---------- */
   function init() {
     el.timeLabel = $('time-label');
@@ -491,6 +899,30 @@ window.APP = (function () {
     el.viewIso = $('view-iso');
     el.compass = $('compass');
     el.compassNeedle = $('compass-needle');
+    // ---- 治理侧：种树规划 ----
+    el.tabRoute = $('tab-route');
+    el.tabPlan = $('tab-plan');
+    el.paneRoute = $('pane-route');
+    el.panePlan = $('pane-plan');
+    el.planCount = $('plan-count');
+    el.planArea = $('plan-area');
+    el.planRatio = $('plan-ratio');
+    el.planMinutes = $('plan-minutes');
+    el.planCost = $('plan-cost');
+    el.planWan = $('plan-wan');
+    el.planBaseline = $('plan-baseline');
+    el.planOptimize = $('plan-optimize');
+    el.planPlantAll = $('plan-plant-all');
+    el.planUndo = $('plan-undo');
+    el.planClear = $('plan-clear');
+    el.planProgress = $('plan-progress');
+    el.planProgressBar = $('plan-progress-bar');
+    el.planProgressText = $('plan-progress-text');
+    el.planMsg = $('plan-msg');
+    el.planRank = $('plan-rank');
+    el.planRankBlock = $('plan-rank-block');
+    el.planRankSum = $('plan-rank-sum');
+    el.planRankNote = $('plan-rank-note');
 
     var n = frameCount();
     if (!n) {

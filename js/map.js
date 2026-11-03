@@ -493,6 +493,106 @@ window.MAP = (function () {
   }
 
   /* ---------- 比例尺 ---------- */
+  /* ---------- 规划层（治理侧）：规划树 + 树影 + 待种点位 ----------
+     只画平面视图（规划交互也只在平面）；几何全在 js/plan.js，这里只管画。
+     分两趟：ground = 树影（要压在路上、被楼盖住），marks = 树和编号（压在最上层）。 */
+  var PLAN_RGB = [42, 112, 168];       // 蓝：规划树（和装饰树的绿分开）
+  var PLAN_BAD_RGB = [198, 60, 48];    // 红：非法位置（楼内/水内/离路太近）
+  var PLAN_PEND_RGB = [232, 138, 42];  // 橙：优化推荐待种点位
+
+  function drawCapsuleShape(ctx, view, cap) {
+    var ax = view.x(cap.ax), ay = view.y(cap.ay), bx = view.x(cap.bx), by = view.y(cap.by);
+    var r = Math.max(cap.r * view.scale, 1.6);
+    var ang = Math.atan2(by - ay, bx - ax);
+    ctx.beginPath();
+    // 胶囊 = 两端半圆 + 直边；用两段 arc 拼，不依赖 ellipse（老浏览器兼容）
+    ctx.arc(ax, ay, r, ang + Math.PI / 2, ang + Math.PI * 1.5, false);
+    ctx.arc(bx, by, r, ang - Math.PI / 2, ang + Math.PI / 2, false);
+    ctx.closePath();
+  }
+
+  function planBadge(ctx, x, y, label, color) {
+    var bx = x + 7, by = y - 7;
+    ctx.beginPath();
+    ctx.arc(bx, by, 6.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.94)';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(24,32,44,0.92)';
+    ctx.font = 'bold 9px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(label), bx, by + 0.5);
+  }
+
+  function drawPlan(plan, phase) {
+    if (!plan || !plan.active || !window.PLAN) { return; }
+    var ctx = state.ctx, view = state.view, dpr = state.dpr;
+    if (!view) { return; }
+    var trees = plan.trees || [], pend = plan.pending || [];
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    if (phase === 'ground') {
+      // 树影：与建筑阴影同一套「胶囊」几何（js/plan.js 算，这里只画）
+      if (plan.shadow !== false) {
+        ctx.fillStyle = 'rgba(29,42,69,0.26)';
+        ctx.strokeStyle = 'rgba(29,42,69,0.38)';
+        ctx.lineWidth = 0.8;
+        for (var i = 0; i < trees.length; i++) {
+          var cap = window.PLAN.shadowCapsule(trees[i], state.sun);
+          if (!cap) { continue; }
+          drawCapsuleShape(ctx, view, cap);
+          ctx.fill();
+          // 14:00 树影只有 9 m（约 4 px），不描边几乎看不见 —— 描一圈才知道"影子落在这儿"
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      return;
+    }
+
+    // 待种点位：橙色虚线圈 + 排名编号
+    for (var q = 0; q < pend.length; q++) {
+      var item = pend[q];
+      var qx = view.x(item.x), qy = view.y(item.y);
+      ctx.beginPath();
+      ctx.arc(qx, qy, Math.max(4 * view.scale, 5.5), 0, Math.PI * 2);
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(232,138,42,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      planBadge(ctx, qx, qy, item.rank, 'rgba(232,138,42,0.95)');
+    }
+
+    // 已种的规划树：蓝色实心圆（非法位置显红并打「!」）
+    for (var j = 0; j < trees.length; j++) {
+      var t = trees[j];
+      var cx = view.x(t.x), cy = view.y(t.y);
+      var rr = Math.max((t.r || 4) * view.scale, 3.6);
+      var legal = t.legal !== false;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+      ctx.fillStyle = legal ? 'rgba(' + PLAN_RGB.join(',') + ',0.82)' : 'rgba(' + PLAN_BAD_RGB.join(',') + ',0.82)';
+      ctx.fill();
+      ctx.strokeStyle = legal ? 'rgba(18,60,102,0.9)' : 'rgba(120,20,15,0.95)';
+      ctx.lineWidth = legal ? 1.1 : 1.8;
+      ctx.stroke();
+      if (!legal) { planBadge(ctx, cx, cy, '!', 'rgba(198,60,48,0.95)'); }
+    }
+    ctx.restore();
+  }
+
+  /* 米坐标 -> 画布 CSS 像素（app.js 做拖拽命中用） */
+  function toScreen(mx, my) {
+    if (!state.view) { return null; }
+    if (state.iso && state.isoProj) { return state.isoProj.project(mx, my, 0); }
+    return [state.view.x(mx), state.view.y(my)];
+  }
+
   function drawScaleBar() {
     var ctx = state.ctx, dpr = state.dpr, view = activeView();
     // 挑一个"好看刻度"，规则在 js/core.js（可在 Node 里单测）
@@ -575,6 +675,8 @@ window.MAP = (function () {
     }
 
     drawShadows(payload.shadows);
+    // 规划树影：地面层，压在路上、被楼盖住才对
+    drawPlan(payload.plan, 'ground');
     if (state.iso && state.isoProj) {
       drawBuildingsIso(payload.buildings || [], payload.trees || []);
     } else {
@@ -584,6 +686,8 @@ window.MAP = (function () {
     }
     drawCampus(payload.campusRing);
     drawGates(payload.gates, payload.campusRing);
+    // 规划树与推荐点位：压在最上层（要能点到、要能看清编号）
+    drawPlan(payload.plan, 'marks');
     // 阴凉路线在下、最快路线在上，重叠时能看出区分
     drawRoute(payload.coolPts, '#38c172', 7, false);
     drawRoute(payload.fastPts, '#ff7a45', 7, true);
@@ -598,6 +702,7 @@ window.MAP = (function () {
     render: render,
     resize: resize,
     toWorld: toWorld,
+    toScreen: toScreen,
     setIso: setIso,
     isIso: isIso,
     northAngle: northAngle
