@@ -53,7 +53,8 @@ function loadSandbox() {
     'data/graph.js',
     'data/basemap.js',
     'content/strings.js',
-    'js/core.js'
+    'js/core.js',
+    'js/trees.js'
   ];
 
   for (var i = 0; i < files.length; i++) {
@@ -456,7 +457,7 @@ if (lake) {
 }
 
 /* --- 2.8 静态约束（不改数据、不联网、语法可解析） --- */
-var jsFiles = ['js/core.js', 'js/iso.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
+var jsFiles = ['js/core.js', 'js/trees.js', 'js/iso.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
 var syntaxBad = [];
 for (var s = 0; s < jsFiles.length; s++) {
   try {
@@ -465,7 +466,7 @@ for (var s = 0; s < jsFiles.length; s++) {
     syntaxBad.push(jsFiles[s] + ': ' + e.message);
   }
 }
-ok('5 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
+ok('6 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
 
 function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
@@ -495,6 +496,12 @@ ok('index.html 引入 js/iso.js 一次，且在 map.js 之前',
   isoAt >= 0 && isoAt < scriptSrcs.indexOf('js/map.js'),
   'iso=' + isoAt + ' map=' + scriptSrcs.indexOf('js/map.js'));
 
+var treesAt = scriptSrcs.indexOf('js/trees.js');
+ok('index.html 引入 js/trees.js 一次，且在 core.js 之后、app.js 之前',
+  scriptSrcs.filter(function (x) { return x === 'js/trees.js'; }).length === 1 &&
+  treesAt > coreAt && treesAt < appAt,
+  'trees=' + treesAt + ' core=' + coreAt + ' app=' + appAt);
+
 var offlineBad = [];
 ['index.html', 'styles.css'].concat(jsFiles).concat(['content/strings.js']).forEach(function (rel) {
   var src = read(rel);
@@ -505,7 +512,7 @@ ok('页面文件无外链/CDN（完全离线）', offlineBad.length === 0, offli
 /* --- 2.8c file:// 硬约束（"双击即用"的守护） ---
    file:// 下 fetch/XHR 会被 CORS/协议拒绝，type="module" 也会被拦；
    一旦有人为了"优雅"引入它们，页面在演示现场就打不开了。 */
-var jsAll = ['js/core.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
+var jsAll = ['js/core.js', 'js/trees.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
 var forbiddenTokens = ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'import('];
 var fileUrlBad = [];
 jsAll.forEach(function (rel) {
@@ -671,7 +678,7 @@ box.addEventListener = function () {};
 
 var jsLoadErr = null;
 try {
-  ['js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
+  ['js/trees.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
     vm.runInContext(read(rel), box, { filename: rel });
   });
 } catch (e) {
@@ -844,6 +851,105 @@ if (!jsLoadErr && !initErr) {
     ok('深链接 #iso 能直开立体视图（其余 hash 一律平面）',
       CORE.wantsIsoView('#iso') === true && CORE.wantsIsoView('#ISO') === true &&
       CORE.wantsIsoView('') === false && CORE.wantsIsoView('#plan') === false);
+
+    /* --- 树（纯观感层） ---
+       树是现场用固定种子生成的，不写 data/*.js、不进阴影与晒度计算。
+       这里锁四件事：确定性、合法性（别长在楼里/水里/校外）、平面视图真的画了、
+       立体视图里树和楼一起排序且树冠存在。 */
+    var TR = W.TREES;
+    ok('js/trees.js 已加载（树是现场生成的装饰层）',
+      !!TR && typeof TR.generate === 'function' && typeof TR.pointInRing === 'function');
+
+    if (TR && typeof TR.generate === 'function') {
+      var treeOpts = {
+        buildings: W.DATA_BUILDINGS,
+        roads: (W.DATA_BASEMAP && W.DATA_BASEMAP.roads) || [],
+        water: (W.DATA_BASEMAP && W.DATA_BASEMAP.water) || [],
+        campusRing: W.DATA_META.campus.ring
+      };
+      var treesA = TR.generate(treeOpts);
+      var treesB = TR.generate(treeOpts);
+      var sameTrees = treesA.length === treesB.length;
+      if (sameTrees) {
+        for (var ti2 = 0; ti2 < treesA.length; ti2++) {
+          var ta = treesA[ti2], tb = treesB[ti2];
+          if (ta.x !== tb.x || ta.y !== tb.y || ta.r !== tb.r || ta.h !== tb.h || ta.tone !== tb.tone) {
+            sameTrees = false; break;
+          }
+        }
+      }
+      ok('树是确定性生成（同一个种子两次完全一致，不会每次刷不一样）', sameTrees,
+        treesA.length + ' vs ' + treesB.length);
+
+      var st = TR.generate.stats || {};
+      ok('树总数达到上限 ' + TR.LIMIT + '，且行道树与空地树都有份额',
+        treesA.length === TR.LIMIT && st.roadTrees > 0 && st.groveTrees > 0,
+        'total=' + treesA.length + ' road=' + st.roadTrees + ' grove=' + st.groveTrees);
+
+      var badSize = 0, badIn = 0, badWater = 0, badOut = 0;
+      for (var ti3 = 0; ti3 < treesA.length; ti3++) {
+        var tt = treesA[ti3];
+        if (!(tt.r >= 2.5 && tt.r <= 5.3 && tt.h >= 6.4 && tt.h <= 11.6 && tt.tone >= 0 && tt.tone <= 1)) { badSize++; }
+        if (!TR.pointInRing(tt.x, tt.y, W.DATA_META.campus.ring)) { badOut++; }
+        for (var bi = 0; bi < W.DATA_BUILDINGS.length; bi++) {
+          var bp = W.DATA_BUILDINGS[bi].p;
+          if (bp && TR.pointInRing(tt.x, tt.y, bp)) { badIn++; break; }
+        }
+        for (var wi = 0; wi < treeOpts.water.length; wi++) {
+          var wp = treeOpts.water[wi].p;
+          if (wp && TR.pointInRing(tt.x, tt.y, wp)) { badWater++; break; }
+        }
+      }
+      ok('每棵树的树冠半径/树高/色阶都在范围内', badSize === 0, '越界 ' + badSize + ' 棵');
+      ok('没有一棵树长在楼里（树冠不会糊在墙上）', badIn === 0, '楼内 ' + badIn + ' 棵');
+      ok('没有一棵树长在水里', badWater === 0, '水内 ' + badWater + ' 棵');
+      ok('树全部落在校园边界内（不会飘到校外）', badOut === 0, '界外 ' + badOut + ' 棵');
+
+      var minGap = Infinity;
+      for (var gi = 0; gi < treesA.length; gi++) {
+        for (var gj = gi + 1; gj < treesA.length; gj++) {
+          var dxx = treesA[gi].x - treesA[gj].x, dyy = treesA[gi].y - treesA[gj].y;
+          var dd2 = dxx * dxx + dyy * dyy;
+          if (dd2 < minGap) { minGap = dd2; }
+        }
+      }
+      minGap = Math.sqrt(minGap);
+      ok('树冠之间保底 ' + TR.MIN_GAP + ' m 间距（不会糊成一坨）',
+        minGap >= TR.MIN_GAP - 1e-6, '实际最小 ' + minGap.toFixed(2) + ' m');
+
+      ok('trees.js 不写 data/*、不碰网络与 DOM（只读生成）',
+        (function () {
+          var src = stripComments(read('js/trees.js'));
+          return src.indexOf('DATA_SHADOWS') < 0 && src.indexOf('DATA_ROUTES') < 0 &&
+            src.indexOf('document.') < 0 && src.indexOf('fetch(') < 0;
+        })());
+
+      // 平面视图：每棵树 = 树冠圆 + 受光面圆；另外画布上只有起终点两个圆也用 arc
+      var arcsBefore = mapCtx.calls.arc || 0;
+      W.APP.redraw();
+      var arcDelta = (mapCtx.calls.arc || 0) - arcsBefore;
+      ok('平面视图给每棵树画了「树冠 + 受光面」两个圆（真的画了，不是只在数据里）',
+        arcDelta === treesA.length * 2 + 2, '新增 arc=' + arcDelta + '，期望 ' + (treesA.length * 2 + 2) + '（树 ' + treesA.length + '×2 + 起终点 2）');
+
+      // 立体视图：树进同一个深度排序列表，树冠是以椭圆多边形画的（不是圆）
+      var treeIsoView = W.ISO.fitView(W.PROJ.fit(1200, 800, 28), 1200, 800, W.ISO.FIT_FACTOR);
+      var treeIsoPrj = W.ISO.make(treeIsoView, 1200, 800);
+      var treeItems = W.ISO.scene(W.DATA_BUILDINGS, treeIsoPrj, W.DATA_META.frames[idx1400].sun, treesA);
+      var canopy = 0, sortedOk = true, lastDepth = -Infinity;
+      for (var ii = 0; ii < treeItems.length; ii++) {
+        if (treeItems[ii].depth < lastDepth) { sortedOk = false; }
+        lastDepth = treeItems[ii].depth;
+        for (var fi = 0; fi < treeItems[ii].faces.length; fi++) {
+          if (treeItems[ii].faces[fi].kind === 'tree') { canopy++; }
+        }
+      }
+      ok('立体视图里每棵树都有树冠面（和楼在同一条深度排序链上）',
+        canopy === treesA.length, '树冠 ' + canopy + ' / 树 ' + treesA.length);
+      ok('立体视图整体按深度从远到近排序（树插在楼之间）', sortedOk);
+
+      ok('图例补了「树」一项（画布上有树，图例不能缺）',
+        html.indexOf('lg-tree') >= 0 && read('styles.css').indexOf('.lg-tree') >= 0);
+    }
   }
 
   var dial = registry['sun-dial'];
