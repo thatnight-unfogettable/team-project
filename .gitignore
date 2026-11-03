@@ -6,6 +6,10 @@
 data/hub.db
 data/hub.db-*
 
+# ===== build.py 覆盖前自动备份（data/.bak/<时间戳>/） =====
+data/.bak/
+*.tmp
+
 # ===== 系统 / 编辑器 =====
 .DS_Store
 Thumbs.db

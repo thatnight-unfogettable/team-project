@@ -1,0 +1,14 @@
+Copyright (c) 2026 thatnight-unfogettable. All rights reserved.
+
+本仓库（代码、文档、生成数据）为个人作品，默认保留所有权利：未经作者书面许可，
+不得复制、修改、分发或用于商业用途。课程/竞赛评审、fork 与只读浏览不受限制。
+
+—— 数据许可的例外 ——
+本项目的地图几何数据（data/raw/*.json 及其派生的 data/buildings.js、data/graph.js、
+data/basemap.js 等）来自 OpenStreetMap（© OpenStreetMap contributors），
+按 ODbL 1.0 许可提供：https://opendatacommons.org/licenses/odbl/1-0/
+这部分数据在再分发时必须保留署名，并以相同许可提供。
+
+—— 如果你想开源 ——
+把本文件整体替换为 MIT 许可全文（并保留上面 ODbL 那段说明）即可；
+届时建议同时在 README 加一节「许可」，说明"代码 MIT / 数据 ODbL"。
