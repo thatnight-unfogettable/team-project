@@ -12,7 +12,11 @@
   --text: #e8eef7;
   --text-dim: #8fa0b8;
   --sun: #ffd166;
-  --shade: #2b3d63;
+  /* 阴影：绘图用的是 #1d2a45 @ 0.42 叠在地面 #f7efd9 上，合成后是 #9b9c9b。
+     图例必须给"合成后的颜色"，否则用户拿图例对不上图（见 _review/frontend.md F-B3）。 */
+  --shade: #9b9c9b;
+  --ground: #f7efd9;
+  --bld-max: #7a7c80;
   --fast: #ff7a45;
   --cool: #38c172;
   --map-bg: #f2f0ea;
@@ -31,7 +35,8 @@ html, body {
 
 #app {
   display: flex;
-  height: 100vh;
+  height: 100vh;   /* 老浏览器回退 */
+  height: 100dvh;  /* 移动端：不被地址栏/工具栏裁掉底部 footer */
   overflow: hidden;
 }
 
@@ -344,15 +349,15 @@ footer p { margin: 0; }
   border-radius: 2px;
   display: inline-block;
 }
-.lg-sun { background: #f7e9c3; border: 1px solid #d8c79b; }
+.lg-sun { background: var(--ground); border: 1px solid #d8c79b; }
 .lg-shade { background: var(--shade); }
 .lg-fast { background: var(--fast); height: 3px; border-radius: 2px; }
 .lg-cool { background: var(--cool); height: 3px; border-radius: 2px; }
 /* 道路：白底 + 灰边，和地图上的画法一致 */
 .lg-road { background: #fffdf4; border: 1px solid #928b78; height: 5px; border-radius: 1px; }
 .lg-water { background: rgba(116, 172, 203, 0.6); border: 1px solid rgba(78, 138, 172, 0.8); }
-/* 建筑高度用色阶表示：左浅右深 */
-.lg-bld { background: linear-gradient(135deg, #b0b2b6 0%, #9a9ca1 45%, #5c616a 100%); border: 1px solid rgba(70, 80, 95, 0.55); }
+/* 建筑高度色阶：右端必须落在实际能画出的最深色（全库最高楼 57.6 m -> #7a7c80） */
+.lg-bld { background: linear-gradient(135deg, #b0b2b6 0%, #9a9ca1 45%, var(--bld-max) 100%); border: 1px solid rgba(70, 80, 95, 0.55); }
 
 #compass {
   position: absolute;
@@ -453,4 +458,12 @@ footer p { margin: 0; }
   #map-wrap { flex: 1; min-height: 48vh; }
   #sun-dial { width: 50px; height: 50px; top: 54px; }
   #low-conf-banner { font-size: 11.5px; padding: 7px 12px; }
+}
+/* 尊重系统的"减少动态效果"设置：横幅位移与太阳箭头旋转都关掉 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

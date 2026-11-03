@@ -198,7 +198,10 @@ window.ROUTER = (function () {
     var fstat = stats(fast, frameIdx);
     // 相邻两栋楼会算出 5 米的"路线"，那不是产品要回答的问题
     if (fstat.length_m < 40) {
-      return { ok: false, reason: '这两点只隔 ' + fstat.length_m + ' 米，太近了；换两个远一点的地方试试' };
+      // 提示语要说清是"沿路长度"还是"两点直线距离"——两者可能差几十米（见 _review/frontend.md F-A5）
+      var straight = Math.sqrt(Math.pow(fromXY[0] - toXY[0], 2) + Math.pow(fromXY[1] - toXY[1], 2));
+      return { ok: false, reason: '这两点沿路只有 ' + Math.round(fstat.length_m) +
+        ' 米（直线约 ' + Math.round(straight) + ' 米），太近了；换两个远一点的地方试试' };
     }
 
     return {

@@ -235,7 +235,10 @@ window.CORE = (function () {
 
   function lowSunBanner(elev) {
     if (!isLowSun(elev)) { return ''; }
-    return '太阳高度角 ' + fmtNum(num(elev, 0), 1) + '°，低于 ' + LOW_SUN_ELEV +
+    var e = num(elev, 0);
+    // 14.96° 四舍五入成 "15.0°" 再配「低于 15°」会自相矛盾，这种情况多留一位小数
+    var shown = (LOW_SUN_ELEV - e) < 0.05 ? e.toFixed(2) : fmtNum(e, 1);
+    return '太阳高度角 ' + shown + '°，低于 ' + LOW_SUN_ELEV +
       '°：阴影被拉长，高度误差被几何放大，本帧阴影仅供参考。';
   }
 

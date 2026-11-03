@@ -43,13 +43,25 @@ window.MAP = (function () {
     state.off = document.createElement('canvas');
     state.offCtx = state.off.getContext('2d');
     resize();
-    window.addEventListener('resize', resize);
+    window.addEventListener('resize', scheduleResize);
+  }
+
+  /* resize 会重设两块全屏画布的 width/height（重新分配缓冲）再全量重绘，
+     拖动窗口时每个事件都做一次会明显卡顿 —— 合并到下一帧。 */
+  var resizeTimer = null;
+  function scheduleResize() {
+    if (resizeTimer) { return; }
+    resizeTimer = setTimeout(function () {
+      resizeTimer = null;
+      resize();
+    }, 80);
   }
 
   function resize() {
     var c = state.canvas;
     var rect = c.parentElement.getBoundingClientRect();
-    state.dpr = window.devicePixelRatio || 1;
+    // dpr 不设上限时，2560×1440@2x 两块画布要 96.7 MB；封到 2 够清晰也够省（见 F-D5）
+    state.dpr = Math.min(2, window.devicePixelRatio || 1);
     state.cssW = Math.max(320, Math.floor(rect.width));
     state.cssH = Math.max(240, Math.floor(rect.height));
     c.width = Math.floor(state.cssW * state.dpr);
