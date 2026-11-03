@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """凉径 ShadeRoute Lite —— 离线预计算工具（零第三方依赖）
 
@@ -23,10 +23,12 @@
 
 import argparse
 import datetime
+import hashlib
 import heapq
 import json
 import math
 import os
+import shutil
 import sys
 import time
 import urllib.error
@@ -151,12 +153,49 @@ def ensure_dirs():
         os.makedirs(d, exist_ok=True)
 
 
+# 一次运行共用一个备份目录名（data/.bak/<时间戳>/），目录已写进 .gitignore
+_BAK_STAMP = None
+
+
+def _backup_file(path):
+    """覆盖前把旧文件备份到 data/.bak/<时间戳>/。
+
+    只在文件已存在时备份；备份失败不阻断构建（打印警告后继续写）。
+    这样一次误操作（例如错误 import）写坏了也能把旧产物找回来。
+    """
+    global _BAK_STAMP
+    if not os.path.exists(path):
+        return
+    if _BAK_STAMP is None:
+        _BAK_STAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = os.path.join(DATA, ".bak", _BAK_STAMP)
+    try:
+        os.makedirs(bak, exist_ok=True)
+        shutil.copy2(path, os.path.join(bak, os.path.basename(path)))
+    except OSError as e:
+        print("      ! 备份 %s 失败（%s），继续写入" % (os.path.basename(path), e))
+
+
+def _atomic_write(path, text):
+    """先写 .tmp 再 os.replace：中途失败不会留下半截文件，读到的永远是完整内容。
+
+    保持原来的文本模式换行（Windows 写 CRLF、Linux 写 LF），不改变已提交产物的字节。
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 def write_js(name, varname, value):
-    """写成 .js（不是 .json），file:// 下也能 <script> 加载"""
+    """写成 .js（不是 .json），file:// 下也能 <script> 加载。
+
+    原子写 + 覆盖前备份：路径上不会出现半截文件，写坏了也能从 data/.bak/ 找回。
+    """
     path = os.path.join(DATA, name)
     text = "window.%s = %s;\n" % (varname, json.dumps(value, ensure_ascii=False, separators=(",", ":")))
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    _backup_file(path)
+    _atomic_write(path, text)
     print("  -> data/%s (%.1f KB)" % (name, len(text.encode("utf-8")) / 1024.0))
 
 
@@ -285,9 +324,17 @@ def cmd_check(_args):
         return
     print("\n结论：所有 Overpass 镜像都不可达。")
     print("对策：1) 换网络/开热点  2) 用 https://overpass-turbo.eu 网页导出 geojson 放到 data/raw/")
+    sys.exit(2)      # 诊断失败必须给非 0 退出码，脚本/CI 才能据此判断
 
 
 # ---------------------------------------------------------------- 2. sample
+
+# 示例路网就是「楼与楼之间的通道」：cmd_sample 把 24 栋假楼排成 6×4，
+# 下面 7 条竖通道 × 5 条横通道组成示例 graph.js / basemap.js 的道路骨架。
+# 全部是常量，保证同一份 sample 两次跑出来字节一致；与真实校园数据完全隔离。
+SAMPLE_LANE_X = [-535 + 170 * i for i in range(7)]
+SAMPLE_LANE_Y = [-465 + 210 * j for j in range(5)]
+
 
 def _hull(points):
     """Andrew 单调链凸包（纯标准库，无任何几何库）。
@@ -369,7 +416,12 @@ def cmd_sample(_args):
     write_js("buildings.js", "DATA_BUILDINGS", buildings)
     write_js("shadows.js", "DATA_SHADOWS", shadows)
     write_js("routes.js", "DATA_ROUTES", routes)
-    print("\n假数据已生成。双击 index.html 就能看到效果（数据是假的）。")
+    # graph/basemap 也必须成套换成示例版：只换一半会让页面「假建筑配真路网/真底图」，
+    # 卡片数字来自真实 graph、画布却是假阴影，自相矛盾（评审 F-P0-2）。
+    write_js("graph.js", "DATA_GRAPH", _sample_graph(frames, shadows))
+    write_js("basemap.js", "DATA_BASEMAP", _sample_basemap())
+    print("\n假数据已生成（meta/buildings/shadows/routes/graph/basemap 六件套）。"
+          "双击 index.html 就能看到效果（数据是假的）。")
 
 
 def _sample_routes(frames):
@@ -390,7 +442,91 @@ def _sample_routes(frames):
 
 
 def _route_metrics(pts, minutes, sun_minutes):
-    return {"pts": pts, "minutes": round(minutes, 1), "sun_minutes": round(sun_minutes, 1)}
+    """示例路线的指标。
+
+    length_m 必须写：前端 core.shadeMeters 靠它反推阴影覆盖率，
+    原来 sample 少了这个字段 → smoke 在 shadeF14.shadePct 上 TypeError 中断。
+    """
+    length = 0.0
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        length += math.hypot(x2 - x1, y2 - y1)
+    return {"pts": pts, "minutes": round(minutes, 1),
+            "sun_minutes": round(sun_minutes, 1), "length_m": round(length, 0)}
+
+
+def _sample_graph(frames, shadows):
+    """示例路网（sample 专用）：楼间通道当路，字段与真实 data/graph.js 完全一致。
+
+    node 按「行优先」编号、边按先横后竖生成，锚点按名字排序，
+    保证两次 sample 写出的 graph.js 字节一致。
+    exposed 用这一帧的示例阴影环现场采样，让"假阴影"和卡片上的阴影覆盖率自洽。
+    """
+    nx, ny = len(SAMPLE_LANE_X), len(SAMPLE_LANE_Y)
+    nodes = []
+    for y in SAMPLE_LANE_Y:
+        for x in SAMPLE_LANE_X:
+            nodes.append([float(x), float(y)])
+
+    edges = []
+    for j in range(ny):
+        for i in range(nx - 1):
+            a = j * nx + i
+            edges.append([a, a + 1, round(abs(SAMPLE_LANE_X[i + 1] - SAMPLE_LANE_X[i]), 3)])
+    for j in range(ny - 1):
+        for i in range(nx):
+            a = j * nx + i
+            edges.append([a, a + nx, round(abs(SAMPLE_LANE_Y[j + 1] - SAMPLE_LANE_Y[j]), 3)])
+
+    # 复用真实 routes 的同一套阴影采样：示例 graph 的暴晒值直接来自示例阴影环
+    edge_dict = {}
+    for eid, edge in enumerate(edges):
+        a, b = edge[0], edge[1]
+        edge_dict[eid] = {"length": edge[2],
+                          "seg": (tuple(nodes[a]), tuple(nodes[b]))}
+    exposed = []
+    for rings in shadows:
+        index = _shadow_index(rings)
+        _edge_shaded(edge_dict, index)
+        exposed.append([int(round(1000.0 * edge_dict[eid].get("exposed", 0.0)))
+                        for eid in range(len(edges))])
+
+    anchor_specs = [
+        # (名字, 列号 i, 行号 j)
+        ("示例起点（假数据）", 1, 1),
+        ("示例终点（假数据）", nx - 2, ny - 2),
+        ("示例地标 A（假数据）", nx - 1, 0),
+        ("示例地标 B（假数据）", 0, ny - 1),
+    ]
+    anchors = []
+    for nm, i, j in anchor_specs:
+        k = j * nx + i
+        anchors.append({"name": nm, "x": nodes[k][0], "y": nodes[k][1], "node": k})
+    anchors.sort(key=lambda a: a["name"])
+
+    return {
+        "nodes": nodes,
+        "main": [1] * len(nodes),          # 示例路网本身是一个连通网格
+        "edges": edges,
+        "exposed": exposed,
+        "exposedUnit": 1000,
+        "anchors": anchors,
+        "coolFactor": COOL_FACTOR,
+        "walkSpeed": WALK_SPEED,
+    }
+
+
+def _sample_basemap():
+    """示例底图：只画示例路网，绝不残留真实道路 / 水系 / 地名。"""
+    roads = []
+    for y in SAMPLE_LANE_Y:
+        roads.append({"t": "local", "p": [[float(SAMPLE_LANE_X[0]), float(y)],
+                                          [float(SAMPLE_LANE_X[-1]), float(y)]]})
+    for x in SAMPLE_LANE_X:
+        roads.append({"t": "local", "p": [[float(x), float(SAMPLE_LANE_Y[0])],
+                                          [float(x), float(SAMPLE_LANE_Y[-1])]]})
+    return {"roads": roads, "water": [], "labels": [],
+            "roadCount": len(roads), "sourceWays": 0,
+            "waterCount": 0, "approxWater": 0}
 
 
 # ---------------------------------------------------------------- 3. fetch
@@ -465,14 +601,19 @@ def _ways_from_elements(js):
 
 
 def _write_raw_and_js(buildings, nodes, ways):
-    with open(os.path.join(RAW, "buildings.json"), "w", encoding="utf-8") as f:
-        json.dump(buildings, f, ensure_ascii=False)
-    with open(os.path.join(RAW, "ways.json"), "w", encoding="utf-8") as f:
-        json.dump({"nodes": {str(k): v for k, v in nodes.items()}, "ways": ways}, f)
-
+    # 先做校园过滤与产出校验，再落盘：宁可什么都不写，也不要把可用数据覆盖成空。
     # 原始数据保留整个 bbox（便于回溯），但给页面用的 buildings.js 必须是校园内的，
     # 否则界面上会出现校外的布匹市场/住宅楼，和"只算校园路线"自相矛盾。
     campus_buildings = _filter_campus(buildings)
+    if not campus_buildings:
+        sys.exit("拒绝写入：校园过滤后建筑为 0 栋（检查 data/raw/campus.json 与导入范围是否一致）")
+
+    b_raw = os.path.join(RAW, "buildings.json")
+    _backup_file(b_raw)
+    _atomic_write(b_raw, json.dumps(buildings, ensure_ascii=False))
+    w_raw = os.path.join(RAW, "ways.json")
+    _backup_file(w_raw)
+    _atomic_write(w_raw, json.dumps({"nodes": {str(k): v for k, v in nodes.items()}, "ways": ways}))
 
     write_js("meta.js", "DATA_META", {
         "origin": [LAT0, LON0], "bbox_m": bbox_m(), "date": DEMO_DATE,
@@ -634,8 +775,12 @@ def cmd_import(args):
         nodes, ways = _ways_from_elements(json.load(f))
 
     print("导入建筑 %d 栋，节点 %d 个，路径 %d 条" % (len(buildings), len(nodes), len(ways)))
+    # 产出闸门：解析结果里建筑或路网任何一边为空都直接拒绝，且此时还没写任何文件。
+    # 以前只检查「过滤前」的建筑数，一次误用就能把 buildings.js 写成 []、清空 ways.json。
     if not buildings:
         sys.exit("建筑为 0，检查文件是不是 Overpass 原始 JSON（含 elements 字段）")
+    if not ways:
+        sys.exit("路网为 0 条 way，检查路网文件是不是 Overpass 原始 JSON（含 elements 字段）")
     _write_raw_and_js(buildings, nodes, ways)
     print("\n已写入 data/raw/ 和 data/*.js。下一步：python tools/build.py shadows && python tools/build.py routes")
 
@@ -841,9 +986,18 @@ def _campus_ring_from_xml(root, nodes):
 
 
 def _campus_ring():
-    """读 data/raw/campus.json 里的校园边界（本地米制环）。没有就返回 None。"""
+    """读 data/raw/campus.json 里的校园边界（本地米制环）。
+
+    CAMPUS_ONLY=True 时这是硬依赖：文件缺失/损坏直接失败退出（fail-closed），
+    不再静默退到整个 bbox 的 555 栋建筑 —— 那样「只算校园内、路线不出校门」
+    的核心口径会静默失效，而且退出码还是 0（评审 F-P1-2）。
+    """
     path = os.path.join(RAW, "campus.json")
     if not os.path.exists(path):
+        if CAMPUS_ONLY:
+            sys.exit("CAMPUS_ONLY=True 但缺少 data/raw/campus.json。\n"
+                     "先跑 python tools/build.py osm 生成校园边界；\n"
+                     "确实要按整个 bbox 运行，请显式把 build.py 的 CAMPUS_ONLY 改成 False。")
         return None
     try:
         with open(path, encoding="utf-8") as f:
@@ -851,6 +1005,9 @@ def _campus_ring():
         ring = [[float(p[0]), float(p[1])] for p in js.get("ring") or []]
         return ring if len(ring) >= 4 else None
     except (ValueError, KeyError, TypeError):
+        if CAMPUS_ONLY:
+            sys.exit("data/raw/campus.json 损坏（不是合法 JSON 或缺少 ring 字段）。\n"
+                     "先跑 python tools/build.py osm 重新生成校园边界。")
         return None
 
 
@@ -864,8 +1021,7 @@ def _filter_campus(buildings, verbose=True):
         return buildings
     ring = _campus_ring()
     if ring is None:
-        if verbose:
-            print("      ! 没有 data/raw/campus.json，跳过校园边界过滤（会用整个 bbox）")
+        # CAMPUS_ONLY=True 时 _campus_ring 已经 fail-closed，走到这里只可能是开关被关掉
         return buildings
     kept = []
     for b in buildings:
@@ -1534,6 +1690,24 @@ def _road_graph_all():
     return pos, adj
 
 
+def _canon_ring(ring):
+    """把环旋转到「字典序最小顶点」开头。
+
+    同一块地无论从环上哪个路口开始枚举，规范化后字节都一样，
+    这样 lakering 的产物不再随 PYTHONHASHSEED / set 迭代顺序变化。
+    """
+    i = min(range(len(ring)), key=lambda k: (round(ring[k][0], 10), round(ring[k][1], 10)))
+    return ring[i:] + ring[:i]
+
+
+def _cand_id(ring):
+    """候选的稳定 ID：规范化环坐标的 SHA1 前 10 位，与枚举顺序 / hash seed 无关。"""
+    h = hashlib.sha1()
+    for x, y in ring:
+        h.update(("%.1f,%.1f;" % (x, y)).encode("ascii"))
+    return h.hexdigest()[:10]
+
+
 def _find_lake_candidates():
     """在路网里找「被一圈路围住、里面几乎没有建筑」的闭合空块。
 
@@ -1550,9 +1724,11 @@ def _find_lake_candidates():
             bcent.append((_poly_centroid(p), _ring_area(p)))
 
     # 生成森林（图可能有多个连通分量），非树边各配一条树上路径 = 一个基本环
+    # 所有 set/dict 遍历都显式排序：默认 set 迭代顺序受 PYTHONHASHSEED 影响，
+    # 会让"哪条边算树边"变化，最终 --list / --pick N 指到另一块空地（评审 F-P0-3）。
     parent, depth, tree_edges = {}, {}, set()
     order = []
-    for root in list(adj):
+    for root in sorted(adj):
         if root in parent:
             continue
         parent[root], depth[root] = None, 0
@@ -1561,7 +1737,7 @@ def _find_lake_candidates():
         while qi < len(order):
             u = order[qi]
             qi += 1
-            for v in adj[u]:
+            for v in sorted(adj[u]):
                 if v not in parent:
                     parent[v], depth[v] = u, depth[u] + 1
                     tree_edges.add((min(u, v), max(u, v)))
@@ -1589,8 +1765,8 @@ def _find_lake_candidates():
                               ring[(i + 1) % n][1] - ring[i][1]) for i in range(n))
 
     cands, seen = [], set()
-    for a in adj:
-        for b in adj[a]:
+    for a in sorted(adj):
+        for b in sorted(adj[a]):
             key = (min(a, b), max(a, b))
             if key in tree_edges or key in seen:
                 continue
@@ -1598,7 +1774,8 @@ def _find_lake_candidates():
             path = _tree_path(key[0], key[1])
             if not path or len(path) < 3:
                 continue
-            ring = [pos[n] for n in path]
+            # 环起点归一化：同一条环从不同路口开始枚举时，产出的 water.json 字节不再旋转
+            ring = _canon_ring([pos[n] for n in path])
             area = _ring_area(ring)
             if not (4000.0 <= area <= 80000.0):
                 continue
@@ -1610,10 +1787,12 @@ def _find_lake_candidates():
                 continue
             inside = sum(ar for (c, ar) in bcent if _point_in_ring(c[0], c[1], ring))
             cands.append({"x": cx, "y": cy, "ring": ring, "area": area,
-                          "perim": perim, "b_ratio": inside / area, "n": len(ring)})
+                          "perim": perim, "b_ratio": inside / area, "n": len(ring),
+                          "id": _cand_id(ring)})
 
-    # 同一块地方会被多条非树边描述成相近的环，按中心点去重
-    cands.sort(key=lambda d: (d["b_ratio"], -d["area"]))
+    # 同一块地方会被多条非树边描述成相近的环，按中心点去重；
+    # 排序加中心坐标 tie-break，保证并列时顺序也稳定（默认 set 顺序不可复现）。
+    cands.sort(key=lambda d: (d["b_ratio"], -d["area"], round(d["x"], 1), round(d["y"], 1)))
     kept = []
     for c in cands:
         if all(math.hypot(c["x"] - k["x"], c["y"] - k["y"]) > 70 for k in kept):
@@ -1636,10 +1815,11 @@ def cmd_lakering(args):
     if not cands:
         sys.exit("路网里没找到像湖的闭合空块")
     print("候选闭合空块（环内建筑占比越低越像湖）：")
-    print("  #   中心x     中心y    面积m2   周长m  建筑占比  顶点")
+    # 稳定 ID 由环几何算出，与 PYTHONHASHSEED / 枚举顺序无关，方便跨机器核对同一块空地
+    print("  序号  稳定ID      中心x     中心y    面积m2   周长m  建筑占比  顶点")
     for i, c in enumerate(cands[:12], 1):
-        print("  %-3d %7.0f %8.0f %9.0f %7.0f %7.1f%% %5d"
-              % (i, c["x"], c["y"], c["area"], c["perim"], c["b_ratio"] * 100, c["n"]))
+        print("  %-4d  %-10s %7.0f %8.0f %9.0f %7.0f %7.1f%% %5d"
+              % (i, c["id"], c["x"], c["y"], c["area"], c["perim"], c["b_ratio"] * 100, c["n"]))
     if args.list:
         return
 
@@ -1664,6 +1844,8 @@ def cmd_lakering(args):
             nxt.append([round(0.75 * x1 + 0.25 * x2, 1), round(0.75 * y1 + 0.25 * y2, 1)])
             nxt.append([round(0.25 * x1 + 0.75 * x2, 1), round(0.25 * y1 + 0.75 * y2, 1)])
         ring = nxt
+    # 切角后再归一化一次：输出环的起点固定为字典序最小顶点，--pick N 的产物跨 seed 一致
+    ring = _canon_ring(ring)
     ring.append(ring[0][:])
 
     path = os.path.join(RAW, "water.json")
