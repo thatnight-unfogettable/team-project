@@ -27,7 +27,8 @@
 python tools\build.py sample    # 先验证界面链路（不需要网络）
 python tools\build.py osm       # 主路径：OSM 主 API，约 3.6 秒
 python tools\build.py all       # 阴影 + 路线
-node tools\smoke.js             # 应为 219 条全过
+node tools\smoke.js             # 应为 224 条全过
+node tools\smoke-green.js       # 应为 187 条全过（绿色收益 + 入口页）
 ```
 
 跑完先验证**五个数**（不对就先别往下做）：
@@ -73,7 +74,7 @@ node tools\smoke.js             # 应为 219 条全过
 - 起终点下拉：默认 老年人活动中心 → 岭南学院；点「路线对比」右侧的「示例 B」按钮切到 学生饭堂 → 老年人活动中心（回到预计算示例，右上角标「预计算」）。
 - 14:00 pair1 应为 **18 分 / 17 暴晒 → 18 分 / 13 暴晒、多走 57 米、少晒 3.3 分钟**。
 - **任意两点**：下拉换两个地名（如 怀士堂 → 黑石屋）能出路线，右上角「现场计算」+ 卡片「全长 xx 米」；**地图上点两下**也能算（吸附 120 米内道路节点）；起点终点选同一个会提示"起点和终点是同一个位置，换一个试试"。
-- `node tools\smoke.js` → **219 条全过**。
+- `node tools\smoke.js` → **224 条全过**；`node tools\smoke-green.js` → **187 条全过**。
 
 ---
 
@@ -123,7 +124,7 @@ node tools\smoke.js             # 应为 219 条全过
 
 ## 每天结束前 5 分钟
 
-- [ ] `node tools\smoke.js` 跑一遍（219 条）
+- [ ] `node tools\smoke.js` 跑一遍（224 条）＋ `node tools\smoke-green.js`（187 条）
 - [ ] 页面双击能开、拖时间不卡
 - [ ] 地图底图正常：四档道路线型分明、楼名不压字、图例有「道路 / 水系」；湖画成半透明 + 虚线边；没有把湖说成测绘数据、也没有说"路名已补上"
 - [ ] 今天的截图存好，命名带时刻

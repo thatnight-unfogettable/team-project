@@ -2,7 +2,7 @@
 
 > **用途**：本项目"做什么、为谁做、做到什么算完"的唯一真相源；改需求先改这里，不要口头改。
 > **权威分工**：协作与流程看仓库根 `AGENTS.md`；数字与口径看 `docs/AGENTS-10.md`；范围与需求看本文档。三者冲突时必须当次修掉。
-> **基线**：2026-11-03，交付物已跑通（`node tools/smoke.js` 219 条断言全过）。本文档按仓库现状回填，不是事前规划稿。
+> **基线**：2026-11-03，交付物已跑通（`node tools/smoke.js` 224 条 + `node tools/smoke-green.js` 187 条断言全过）。本文档按仓库现状回填，不是事前规划稿。
 
 ---
 
@@ -64,7 +64,7 @@
 
 - [x] **可运行的程序**：双击 `index.html`（无安装、无构建、`file://` 可用）
 - [x] **预计算管线**：`tools/build.py`（13 个子命令，Python 3.8+ 标准库，零第三方依赖）
-- [x] **测试**：`node tools/smoke.js` → **219 条断言全过**（退出码 0）
+- [x] **测试**：`node tools/smoke.js` → **224 条断言全过**；`node tools/smoke-green.js` → **187 条全过**（退出码 0）
 - [x] **文档**：`README.md` + `docs/` 9 份（README/DATA-SOURCES/AGENTS-10/PITCH/PPT-OUTLINE/QA-EXTRA/EXAMPLE-QUERIES/SOLO-PLAN/PROJECT-SCOPE/TASKS）
 - [x] **演示路径**：3 分钟讲稿（`docs/PITCH.md`）+ 12 页 PPT 大纲 + 断网/录屏兜底
 - [x] **许可与署名**：`LICENSE`（代码与文档保留所有权利；地图几何数据 ODbL 例外）
@@ -81,7 +81,7 @@
 | 运行环境 | Windows / Chrome、Edge；页面 `file://` 双击即用；构建需 Python 3.8+ |
 | 必须遵守的技术约束 | **无 npm / 无框架 / 无构建工具 / 无 CDN / 运行时零网络**；数据一律 `data/*.js` 形式（`window.DATA_*`）|
 | 不能用的技术 | 商业地图几何与瓦片、在线地理编码/路径规划 API、WebGL 或服务端实时阴影（都要联网或重依赖） |
-| 数据规模 | `data/*.js` 合计 **1104.2 KB**（`shadows.js` 861.6 KB 为大头），页面解析约 **21 ms** |
+| 数据规模 | `data/*.js` 合计 **1111.3 KB**（`shadows.js` 861.6 KB 为大头），页面解析约 **21 ms** |
 | 数据许可 | OSM ODbL 1.0：几何数据再分发须署名 + 同许可；页面与文档必须保留 `© OpenStreetMap contributors` |
 
 ---
@@ -110,7 +110,7 @@
 | 范围 / 口径 / 演示叙事 | 作者 | AI agent 起草素材 | 约 1 天（含两次返工：范围、日期） |
 | 数据管线 `tools/build.py`（拉数 / 裁切 / 阴影 / 路由 / 底图） | 作者 | OSM API | 约 1.5 天 |
 | 前端 `js/*.js`（Canvas 11 层、交互、浏览器端 Dijkstra） | 作者 | 数据契约 | 约 1 天 |
-| 测试 `tools/smoke.js`（219 条断言） | 作者 | 前端 + 数据 | 约 0.5 天 |
+| 测试 `tools/smoke.js`（224 条）+ `tools/smoke-green.js`（187 条） | 作者 | 前端 + 数据 | 约 0.5 天 |
 | 代码初稿 / 几何推导 / 文档草稿 / 数据核对 | AI agent（DSH） | 作者定口径 | 与上述并行 |
 
 **判断由人做的部分**（AI 不会主动提）：范围从矩形改校园多边形、演示日从夏至改 11 月、口径从"绝对阴影"退到"相对差异"、以及"不吹降温"。
