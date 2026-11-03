@@ -247,6 +247,91 @@ window.CORE = (function () {
     return normAz(az);
   }
 
+  /* ---------- 校门：道路与校园边界的交点 ----------
+     不引外部数据：校园的门都开在"路穿过校界"的豁口上，
+     所以直接拿"道路线段 × 边界环"求交，再按方位角命名。
+     一条路在同一个豁口穿两次会得到两个交点，按 60 m 聚类合并。
+     返回 [{ x, y, az, dir, name, kind, main }]，按方位角升序（正北 0°、顺时针）。 */
+  function segIntersect(a, b, c, d) {
+    var rx = b[0] - a[0], ry = b[1] - a[1];
+    var sx = d[0] - c[0], sy = d[1] - c[1];
+    var den = rx * sy - ry * sx;
+    if (Math.abs(den) < 1e-12) { return null; }
+    var t = ((c[0] - a[0]) * sy - (c[1] - a[1]) * sx) / den;
+    var u = ((c[0] - a[0]) * ry - (c[1] - a[1]) * rx) / den;
+    if (t < 0 || t > 1 || u < 0 || u > 1) { return null; }
+    return [a[0] + t * rx, a[1] + t * ry];
+  }
+
+  var DIRS8 = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+
+  function gatesFromRoads(roads, ring, opts) {
+    opts = opts || {};
+    var clusterM = num(opts.clusterM, 90);
+    if (!roads || !roads.length || !ring || ring.length < 3) { return []; }
+    var PRI = { main: 3, local: 2, service: 1, path: 0 };
+
+    // 1) 求全部交点
+    var raw = [];
+    for (var i = 0; i < roads.length; i++) {
+      var pts = roads[i] && roads[i].p;
+      if (!pts || pts.length < 2) { continue; }
+      for (var k = 0; k + 1 < pts.length; k++) {
+        for (var j = 0; j < ring.length; j++) {
+          var hit = segIntersect(pts[k], pts[k + 1], ring[j], ring[(j + 1) % ring.length]);
+          if (hit) { raw.push({ x: hit[0], y: hit[1], t: roads[i].t || 'path' }); }
+        }
+      }
+    }
+
+    // 2) 按距离聚类（同一豁口的两个交点合成一个门）
+    var groups = [];
+    for (var n = 0; n < raw.length; n++) {
+      var p = raw[n], target = null;
+      for (var g = 0; g < groups.length; g++) {
+        var dx = groups[g].sx / groups[g].n - p.x, dy = groups[g].sy / groups[g].n - p.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= clusterM) { target = groups[g]; break; }
+      }
+      if (!target) { groups.push({ sx: 0, sy: 0, n: 0, pri: -1, t: p.t }); target = groups[groups.length - 1]; }
+      target.sx += p.x; target.sy += p.y; target.n += 1;
+      if ((PRI[p.t] === undefined ? 0 : PRI[p.t]) > target.pri) { target.pri = PRI[p.t] === undefined ? 0 : PRI[p.t]; target.t = p.t; }
+    }
+
+    // 3) 命名：方位角 → 八方位 → 「北门 / 东北门 ...」
+    var gates = [];
+    for (var gi = 0; gi < groups.length; gi++) {
+      var grp = groups[gi];
+      var x = grp.sx / grp.n, y = grp.sy / grp.n;
+      var az = (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;   // x=东, y=北
+      var dir = DIRS8[Math.round(az / 45) % 8];
+      var isMain = grp.pri >= 2;       // 主干道/校内路上的门算正门
+      gates.push({
+        x: Math.round(x * 10) / 10,
+        y: Math.round(y * 10) / 10,
+        az: Math.round(az * 10) / 10,
+        dir: dir,
+        // 正门叫「北门 / 东门」，步道上的叫「北便门 / 西南便门」——
+        // 同一方位可能既有正门又有便门，这样命名就不会撞名
+        name: dir + (isMain ? '门' : '便门'),
+        kind: grp.t,
+        main: isMain
+      });
+    }
+
+    gates.sort(function (a, b) { return a.az - b.az; });
+    // 兜底：万一同一方位出现两扇同类门，加序号（不能出现两个"北门"）
+    var seen = {};
+    for (var q = 0; q < gates.length; q++) {
+      if (seen[gates[q].name]) {
+        seen[gates[q].name] += 1;
+        gates[q].name = gates[q].name + seen[gates[q].name];
+      } else {
+        seen[gates[q].name] = 1;
+      }
+    }
+    return gates;
+  }
+
   /* 建筑填充色：越高的楼颜色越深（h 单位米，60 m 封顶） */
   function buildingFill(h) {
     var t = Math.min(1, Math.max(0, num(h, 12) / 60));
@@ -288,6 +373,7 @@ window.CORE = (function () {
     compassRotation: compassRotation,
     azimuthDir: azimuthDir,
     buildingFill: buildingFill,
+    gatesFromRoads: gatesFromRoads,
     wantsIsoView: wantsIsoView,
     scaleBarMeters: scaleBarMeters,
     fmtNum: fmtNum

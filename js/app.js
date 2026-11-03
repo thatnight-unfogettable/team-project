@@ -174,6 +174,15 @@ window.APP = (function () {
     return state.trees;
   }
 
+  /* ---------- 校门：道路与校园边界的交点，只算一次 ---------- */
+  function gateList() {
+    if (state.gates) { return state.gates; }
+    var ring = (META.campus && META.campus.ring) || null;
+    state.gates = (CORE.gatesFromRoads && BASEMAP && BASEMAP.roads)
+      ? CORE.gatesFromRoads(BASEMAP.roads, ring) : [];
+    return state.gates;
+  }
+
   /* ---------- 渲染一帧 ---------- */
   function render() {
     var i = state.frame;
@@ -196,7 +205,8 @@ window.APP = (function () {
       toXY: cur.toXY || null,
       campusRing: (META.campus && META.campus.ring) || null,
       basemap: BASEMAP,
-      trees: treeList()
+      trees: treeList(),
+      gates: gateList()
     });
 
     // ---- 顶部时间与太阳 ----

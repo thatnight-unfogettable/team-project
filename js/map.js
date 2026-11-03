@@ -295,6 +295,51 @@ window.MAP = (function () {
     ctx.restore();
   }
 
+  /* ---------- 校门 ----------
+     位置来自 core.gatesFromRoads（道路 × 校园边界的交点），这里只负责画：
+     白底深框的圆点 + 外推一点的门名牌，立体视图下文字保持正立。 */
+  function drawGates(gates, ring) {
+    if (!gates || !gates.length) { return; }
+    var ctx = state.ctx, dpr = state.dpr;
+    var cx = 0, cy = 0;
+    if (ring && ring.length) {
+      for (var k = 0; k < ring.length; k++) { cx += ring[k][0]; cy += ring[k][1]; }
+      cx /= ring.length; cy /= ring.length;
+    }
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var i = 0; i < gates.length; i++) {
+      var gt = gates[i];
+      if (!gt) { continue; }
+      var pp = projPoint(gt.x, gt.y, 0), px = pp[0], py = pp[1];
+      var dx = gt.x - cx, dy = gt.y - cy;
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var out = projPoint(gt.x + dx / len * 17, gt.y + dy / len * 17, 0);
+
+      ctx.beginPath();
+      ctx.arc(px, py, gt.main ? 4.8 : 3.6, 0, Math.PI * 2);
+      ctx.fillStyle = '#fffdf4';
+      ctx.fill();
+      ctx.lineWidth = gt.main ? 1.8 : 1.2;
+      ctx.strokeStyle = gt.main ? '#2f3b52' : '#7a8394';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px, py, (gt.main ? 4.8 : 3.6) * 0.38, 0, Math.PI * 2);
+      ctx.fillStyle = gt.main ? '#2f3b52' : '#7a8394';
+      ctx.fill();
+
+      ctx.font = (gt.main ? '600 ' : '') + '10px ' + FONT;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(255,253,244,0.92)';
+      ctx.strokeText(gt.name, out[0], out[1]);
+      ctx.fillStyle = gt.main ? '#2f3b52' : '#5b6474';
+      ctx.fillText(gt.name, out[0], out[1]);
+    }
+    ctx.restore();
+  }
+
   /* ---------- 校园边界 ---------- */
   function drawCampus(ring) {
     if (!ring || ring.length < 3) { return; }
@@ -538,6 +583,7 @@ window.MAP = (function () {
       drawBuildings(payload.buildings || []);
     }
     drawCampus(payload.campusRing);
+    drawGates(payload.gates, payload.campusRing);
     // 阴凉路线在下、最快路线在上，重叠时能看出区分
     drawRoute(payload.coolPts, '#38c172', 7, false);
     drawRoute(payload.fastPts, '#ff7a45', 7, true);
