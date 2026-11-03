@@ -456,7 +456,7 @@ if (lake) {
 }
 
 /* --- 2.8 静态约束（不改数据、不联网、语法可解析） --- */
-var jsFiles = ['js/core.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
+var jsFiles = ['js/core.js', 'js/iso.js', 'js/proj.js', 'js/map.js', 'js/app.js'];
 var syntaxBad = [];
 for (var s = 0; s < jsFiles.length; s++) {
   try {
@@ -465,7 +465,7 @@ for (var s = 0; s < jsFiles.length; s++) {
     syntaxBad.push(jsFiles[s] + ': ' + e.message);
   }
 }
-ok('4 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
+ok('5 个 js 文件语法可解析（等价 node --check）', syntaxBad.length === 0, syntaxBad.join('; '));
 
 function stripComments(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
@@ -489,6 +489,12 @@ ok('js/core.js 在 app.js / proj.js / map.js 之前加载',
   coreAt >= 0 && appAt >= 0 && projAt >= 0 && coreAt < appAt && coreAt < projAt && coreAt < scriptSrcs.indexOf('js/map.js'),
   'core=' + coreAt + ' proj=' + projAt + ' app=' + appAt);
 
+var isoAt = scriptSrcs.indexOf('js/iso.js');
+ok('index.html 引入 js/iso.js 一次，且在 map.js 之前',
+  scriptSrcs.filter(function (x) { return x === 'js/iso.js'; }).length === 1 &&
+  isoAt >= 0 && isoAt < scriptSrcs.indexOf('js/map.js'),
+  'iso=' + isoAt + ' map=' + scriptSrcs.indexOf('js/map.js'));
+
 var offlineBad = [];
 ['index.html', 'styles.css'].concat(jsFiles).concat(['content/strings.js']).forEach(function (rel) {
   var src = read(rel);
@@ -499,7 +505,7 @@ ok('页面文件无外链/CDN（完全离线）', offlineBad.length === 0, offli
 /* --- 2.8c file:// 硬约束（"双击即用"的守护） ---
    file:// 下 fetch/XHR 会被 CORS/协议拒绝，type="module" 也会被拦；
    一旦有人为了"优雅"引入它们，页面在演示现场就打不开了。 */
-var jsAll = ['js/core.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
+var jsAll = ['js/core.js', 'js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'];
 var forbiddenTokens = ['fetch(', 'XMLHttpRequest', 'sendBeacon', 'import('];
 var fileUrlBad = [];
 jsAll.forEach(function (rel) {
@@ -623,7 +629,9 @@ mainCanvas.id = 'map';
 registry['map'] = mainCanvas;
 mainCanvas.parentElement = mapWrap;
 var legend = makeElement('div', 'legend');
-makeElement('div', 'compass');
+var compassEl = makeElement('div', 'compass');
+var needleEl = makeElement('i', 'compass-needle');
+compassEl.appendChild(needleEl);
 ['time-label', 'time-slider', 'sun-elev', 'sun-az', 'sun-hint',
   'start-select', 'end-select', 'pick-hint', 'route-tag',
   'fast-min', 'fast-sun', 'fast-shade', 'fast-len',
@@ -644,13 +652,26 @@ pairBEl.setAttribute('data-pair', '1');
 pairBEl.setAttribute('aria-pressed', 'false');
 pairBEl.textContent = '示例 B';
 
+// 「平面 / 立体」视图按钮：index.html 里新增，stub 里也得有，否则
+// app.js 的 bind() 拿不到节点，立体视图这条路径完全测不到。
+var viewPlanEl = makeElement('button', 'view-plan');
+viewPlanEl.className = 'view-btn is-on';
+viewPlanEl.setAttribute('data-iso', '0');
+viewPlanEl.setAttribute('aria-pressed', 'true');
+viewPlanEl.textContent = '平面';
+var viewIsoEl = makeElement('button', 'view-iso');
+viewIsoEl.className = 'view-btn';
+viewIsoEl.setAttribute('data-iso', '1');
+viewIsoEl.setAttribute('aria-pressed', 'false');
+viewIsoEl.textContent = '立体';
+
 box.document = doc;
 box.devicePixelRatio = 1;
 box.addEventListener = function () {};
 
 var jsLoadErr = null;
 try {
-  ['js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
+  ['js/iso.js', 'js/proj.js', 'js/router.js', 'js/map.js', 'js/app.js'].forEach(function (rel) {
     vm.runInContext(read(rel), box, { filename: rel });
   });
 } catch (e) {
@@ -701,6 +722,125 @@ if (!jsLoadErr && !initErr) {
   ok('画布确实画了地面 / 阴影 / 路线',
     !!mapCtx && mapCtx.calls.fillRect >= 1 && mapCtx.calls.drawImage >= 1 && mapCtx.calls.stroke >= 1,
     mapCtx ? JSON.stringify(mapCtx.calls) : 'no ctx');
+
+  /* --- 2.5D 立体视图（零依赖体块） ---
+     默认平面视图必须完全不变（上面那些断言就是守护），这里单独测立体这条路：
+     几何可逆、面朝得对、亮度跟太阳走、按钮/指北针同步、切回来不留脏状态。 */
+  var ISO = W.ISO;
+  var isoOk = !!ISO && typeof ISO.make === 'function' && typeof ISO.scene === 'function';
+  ok('js/iso.js 已加载（立体视图的几何模块）', isoOk);
+
+  if (isoOk) {
+    var baseView = W.PROJ.fit(1200, 800, 28);
+    var isoView = ISO.fitView(baseView, 1200, 800, ISO.FIT_FACTOR);
+    ok('立体视图比平面视图略小（旋转后四角不出画）',
+      Math.abs(isoView.scale - baseView.scale * ISO.FIT_FACTOR) < 1e-9,
+      baseView.scale.toFixed(4) + ' -> ' + isoView.scale.toFixed(4));
+    ok('等比缩小时画布中心不动（bbox 中心仍落在 600,400）',
+      Math.abs(isoView.x(0) - 600) < 1e-6 && Math.abs(isoView.y(0) - 400) < 1e-6,
+      isoView.x(0).toFixed(2) + ',' + isoView.y(0).toFixed(2));
+
+    var prj = ISO.make(isoView, 1200, 800);
+    var rtOk = [[120, -80], [-300, 260], [0, 0]].every(function (w) {
+      var s = prj.project(w[0], w[1], 0);
+      var b = prj.unproject(s[0], s[1]);
+      return Math.abs(b[0] - w[0]) < 1e-6 && Math.abs(b[1] - w[1]) < 1e-6;
+    });
+    ok('投影可逆：屏幕坐标能反解回米坐标（立体下点选依然准）', rtOk);
+
+    var hUp = prj.project(0, 0, 30), hDown = prj.project(0, 0, 0);
+    ok('楼高往上拔：30 m 的点比地面点更靠屏幕上方',
+      hUp[0] === hDown[0] && hUp[1] < hDown[1],
+      hUp[1].toFixed(1) + ' < ' + hDown[1].toFixed(1));
+
+    var sun14 = W.DATA_META.frames[idx1400].sun;
+    var items = ISO.scene(W.DATA_BUILDINGS, prj, sun14);
+    var faceTotal = 0;
+    var sortedOk = true;
+    for (var i2 = 0; i2 < items.length; i2++) {
+      faceTotal += items[i2].faces.length;
+      if (i2 > 0 && items[i2].depth < items[i2 - 1].depth) { sortedOk = false; }
+    }
+    ok('楼按深度从远到近排（画家算法：近的盖住远的）', items.length > 200 && sortedOk,
+      items.length + ' 栋 / ' + faceTotal + ' 个面');
+    ok('每栋楼 = 1 个顶面 + 至少 1 个朝向观察者的侧面',
+      items.every(function (it) {
+        var top = 0, side = 0;
+        it.faces.forEach(function (f) { if (f.kind === 'top') { top++; } else { side++; } });
+        return top === 1 && side >= 1;
+      }));
+    ok('所有面都是有限坐标 + 合法颜色（不会画出 NaN 黑块）',
+      items.every(function (it) {
+        return it.faces.every(function (f) {
+          return f.pts.length >= 3 && /^rgb\(/.test(f.fill) && f.pts.every(function (q) {
+            return isFinite(q[0]) && isFinite(q[1]);
+          });
+        });
+      }));
+
+    // 一栋 50×50 的方楼：轴对齐 + yaw=-26° 时只有 2 个侧面朝着观察者
+    var square = [{ p: [[0, 0], [50, 0], [50, 50], [0, 50]], h: 18 }];
+    var sq = ISO.scene(square, prj, sun14);
+    ok('方楼只画朝向观察者的侧面（2 面 + 顶面 = 3）',
+      sq.length === 1 && sq[0].faces.length === 3, '面数=' + (sq[0] ? sq[0].faces.length : 'n/a'));
+
+    function bright(fill) {
+      var m = /rgb\((\d+),(\d+),(\d+)\)/.exec(fill);
+      return m ? (Number(m[1]) + Number(m[2]) + Number(m[3])) / 3 : NaN;
+    }
+    function sideAvg(sc) {
+      var s = 0, n = 0;
+      sc[0].faces.forEach(function (f) { if (f.kind === 'side') { s += bright(f.fill); n++; } });
+      return n ? s / n : NaN;
+    }
+    ok('侧面亮度跟着太阳方位走（太阳在南比在北更亮）',
+      sideAvg(ISO.scene(square, prj, [180, 40])) > sideAvg(ISO.scene(square, prj, [0, 40])) + 8,
+      sideAvg(ISO.scene(square, prj, [180, 40])).toFixed(1) + ' > ' +
+      sideAvg(ISO.scene(square, prj, [0, 40])).toFixed(1));
+
+    function topBright(elev) {
+      var faces = ISO.scene(square, prj, [180, elev])[0].faces;
+      for (var t = 0; t < faces.length; t++) { if (faces[t].kind === 'top') { return bright(faces[t].fill); } }
+      return NaN;
+    }
+    ok('顶面亮度随太阳高度角变化（正午比清晨亮）', topBright(70) > topBright(5) + 5,
+      topBright(70).toFixed(1) + ' > ' + topBright(5).toFixed(1));
+
+    // —— DOM 侧：按钮 / 指北针 / 点选 ——
+    var planBtn = registry['view-plan'], isoBtn = registry['view-iso'];
+    ok('「平面 / 立体」两个按钮都接上了（index.html + app.js）', !!planBtn && !!isoBtn);
+    ok('默认是平面视图', W.MAP.isIso() === false);
+
+    var fillsBefore = (mainCanvas._ctx.calls.fill || 0);
+    var textsBefore = (mainCanvas._ctx.calls.fillText || 0);
+    isoBtn.dispatch('click');
+    var fillsDelta = (mainCanvas._ctx.calls.fill || 0) - fillsBefore;
+    var textsDelta = (mainCanvas._ctx.calls.fillText || 0) - textsBefore;
+    ok('点「立体」进入体块视图并真的多画了几百个面（+' + fillsDelta + ' 次 fill）',
+      W.MAP.isIso() === true && fillsDelta > 400, 'fill+' + fillsDelta);
+    ok('立体视图下标注仍然画出来（fillText 有增量，文字没被旋转矩阵带走）',
+      textsDelta > 10, 'fillText+' + textsDelta);
+    ok('按钮状态同步（aria-pressed / is-on）',
+      isoBtn.getAttribute('aria-pressed') === 'true' && String(isoBtn.className).indexOf('is-on') >= 0 &&
+      planBtn.getAttribute('aria-pressed') === 'false');
+    ok('指北针按投影算出的正北角旋转（不是直接拿 yaw 顶替）',
+      registry['compass-needle'].style.transform === 'rotate(' + W.MAP.northAngle().toFixed(1) + 'deg)' &&
+      Math.abs(W.MAP.northAngle() - ISO.YAW_DEG) > 1,
+      registry['compass-needle'].style.transform + ' | northAngle=' + W.MAP.northAngle().toFixed(1) + '°');
+
+    var centerW = W.MAP.toWorld(600, 400);
+    var bx0 = (W.PROJ.bbox[0] + W.PROJ.bbox[2]) / 2;
+    var by0 = (W.PROJ.bbox[1] + W.PROJ.bbox[3]) / 2;
+    ok('立体视图下点选坐标仍正确（画布中心 = 校园几何中心）',
+      Math.abs(centerW[0] - bx0) < 1 && Math.abs(centerW[1] - by0) < 1,
+      centerW[0].toFixed(1) + ',' + centerW[1].toFixed(1) + ' vs ' + bx0 + ',' + by0);
+
+    // V 键切换（演示时一个键切视图）
+    doc.dispatch('keydown', { key: 'v', target: { tagName: 'BODY' }, preventDefault: function () {} });
+    ok('按 V 键能切回平面视图', W.MAP.isIso() === false && planBtn.getAttribute('aria-pressed') === 'true');
+    ok('切回平面后指北针复位', registry['compass-needle'].style.transform === 'rotate(0.0deg)',
+      registry['compass-needle'].style.transform);
+  }
 
   var dial = registry['sun-dial'];
   var arrow = registry['sun-arrow'];
