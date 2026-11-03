@@ -20,6 +20,7 @@ window.APP = (function () {
   var state = {
     frame: 0,
     pair: 0,
+    userPicked: false, // 用户是否自己选了起终点（下拉/地图点选）；false = 用预计算示例
     fromXY: null,      // 起点（米坐标），null = 用预计算示例
     toXY: null,        // 终点（米坐标）
     fromName: '',
@@ -115,22 +116,18 @@ window.APP = (function () {
 
   /* ---------- 当前起终点 + 当前帧 -> 两条路线 ---------- */
   /*
-    优先用浏览器端 ROUTER 现场算（支持任意两点）；
-    万一 graph.js 没生成（老数据），退回预计算的两对示例路线。
+    两条输入路径，各有各的用途：
+    1) 用户自己选了起终点（下拉 / 地图点选）→ 浏览器端 ROUTER 现场算，支持任意两点；
+    2) 没选点（默认 / 点了示例 A、示例 B）→ 直接用 build.py 预计算的示例路线，瞬时切换。
+       实测两条路径在 62 个「帧 × 示例起终点」上结果完全一致（tools/smoke.js 有断言），
+       所以"预计算"与"现场算"可以放心并存，不会出现两套数字。
   */
   function currentRoutes() {
     var i = state.frame;
     state.routeMsg = '';
 
-    if (window.ROUTER && window.ROUTER.ready() && state.fromXY && state.toXY) {
-      var live = window.ROUTER.solve(state.fromXY, state.toXY, i);
-      if (live.ok) {
-        return { fastest: live.fastest, cool: live.cool, live: true,
-                 fromXY: live.from.x === undefined ? null : [live.from.x, live.from.y],
-                 toXY: [live.to.x, live.to.y] };
-      }
-      state.routeMsg = live.reason || '';
-      return { fastest: null, cool: null, live: true, msg: state.routeMsg };
+    if (state.userPicked) {
+      return solveLive(i);
     }
 
     var routeFrame = (ROUTES.frames && ROUTES.frames[i]) || null;
@@ -140,7 +137,23 @@ window.APP = (function () {
                fromXY: pairData.fastest.pts[0],
                toXY: pairData.fastest.pts[pairData.fastest.pts.length - 1] };
     }
-    return { fastest: null, cool: null, live: false };
+
+    // 预计算缺失（老数据）→ 退回现场算
+    return solveLive(i);
+  }
+
+  function solveLive(i) {
+    if (!window.ROUTER || !window.ROUTER.ready() || !state.fromXY || !state.toXY) {
+      return { fastest: null, cool: null, live: true };
+    }
+    var live = window.ROUTER.solve(state.fromXY, state.toXY, i);
+    if (live.ok) {
+      return { fastest: live.fastest, cool: live.cool, live: true,
+               fromXY: live.from.x === undefined ? null : [live.from.x, live.from.y],
+               toXY: [live.to.x, live.to.y] };
+    }
+    state.routeMsg = live.reason || '';
+    return { fastest: null, cool: null, live: true, msg: state.routeMsg };
   }
 
   /* ---------- 渲染一帧 ---------- */
@@ -206,6 +219,9 @@ window.APP = (function () {
       render();
     });
 
+    if (el.pairA) { el.pairA.addEventListener('click', function () { selectPair(0); }); }
+    if (el.pairB) { el.pairB.addEventListener('click', function () { selectPair(1); }); }
+
     el.startSelect.addEventListener('change', function () {
       var a = anchorAt(parseInt(this.value, 10));
       if (a) { setEndpoint('from', [a.x, a.y], a.name); }
@@ -236,8 +252,11 @@ window.APP = (function () {
 
     // 键盘 ←/→ 切时间（演示时很有用）
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'ArrowLeft') { step(-1); }
-      if (e.key === 'ArrowRight') { step(1); }
+      // 焦点在原生控件（下拉/滑块/输入框）里时，方向键应交给控件自己处理，否则会“换选项 + 切时间”双动作
+      var tag = e.target && e.target.tagName;
+      if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA') { return; }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
     });
   }
 
@@ -258,6 +277,7 @@ window.APP = (function () {
   }
 
   function setEndpoint(which, xy, name) {
+    state.userPicked = true;   // 用户自己选过点 → 之后一律现场算，不再套用示例
     if (which === 'from') {
       state.fromXY = xy; state.fromName = name;
       markSelect(el.startSelect, name);
@@ -265,6 +285,7 @@ window.APP = (function () {
       state.toXY = xy; state.toName = name;
       markSelect(el.endSelect, name);
     }
+    updatePairButtons();
     updatePickHint();
     render();
   }
@@ -274,7 +295,7 @@ window.APP = (function () {
     if (!sel) { return; }
     var opts = sel.options || sel.children || [];
     for (var i = 0; i < opts.length; i++) {
-      if (opts[i].textContent === name) { sel.value = String(i); return; }
+      if (opts[i].textContent === name) { sel.selectedIndex = i; return; }
     }
     var customIdx = -1;
     for (var j = 0; j < opts.length; j++) {
@@ -287,7 +308,8 @@ window.APP = (function () {
       sel.appendChild(opt);
       customIdx = opts.length - 1;
     }
-    sel.value = String(customIdx);
+    // 临时项 option.value 写的是 '-1'，用 sel.value 设会匹配不到任何项 → selectedIndex = -1（下拉变空白）
+    sel.selectedIndex = customIdx;
   }
 
   function updatePickHint() {
@@ -328,6 +350,51 @@ window.APP = (function () {
     return best;
   }
 
+  /* ---------- 示例 A / 示例 B ---------- */
+  function pairAt(i) {
+    var pairs = (ROUTES && ROUTES.pairs) || [];
+    return pairs[i] || null;
+  }
+
+  function selectPair(i) {
+    var p = pairAt(i);
+    if (!p) { return; }
+    state.pair = i;
+    state.userPicked = false;   // 回到预计算示例
+    state.routeMsg = '';
+    if (window.PROJ && window.PROJ.toXY) {
+      var fxy = window.PROJ.toXY(p.from[0], p.from[1]);
+      var txy = window.PROJ.toXY(p.to[0], p.to[1]);
+      var list = (window.ROUTER && window.ROUTER.anchors()) || [];
+      var a = nearestAnchorTo(list, fxy);
+      var b = nearestAnchorTo(list, txy);
+      var names = String(p.name || '').split('→');
+      state.fromXY = [fxy[0], fxy[1]];
+      state.toXY = [txy[0], txy[1]];
+      state.fromName = (a && a.name) || (names[0] || '').trim() || '起点';
+      state.toName = (b && b.name) || (names[1] || '').trim() || '终点';
+      markSelect(el.startSelect, state.fromName);
+      markSelect(el.endSelect, state.toName);
+    }
+    updatePairButtons();
+    updatePickHint();
+    render();
+  }
+
+  /* 按钮状态与标题（标题显示这一组示例的真实起终点） */
+  function updatePairButtons() {
+    var btns = [el.pairA, el.pairB];
+    for (var i = 0; i < btns.length; i++) {
+      var btn = btns[i];
+      if (!btn) { continue; }
+      var on = (i === state.pair) && !state.userPicked;
+      btn.className = 'pair-btn' + (on ? ' is-on' : '');
+      if (btn.setAttribute) { btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+      var p = pairAt(i);
+      if (p && p.name) { btn.title = p.name; }
+    }
+  }
+
   /* ---------- 初始化 ---------- */
   function init() {
     el.timeLabel = $('time-label');
@@ -353,6 +420,8 @@ window.APP = (function () {
     el.place = $('place');
     el.dataFlag = $('data-flag');
     el.notes = $('notes');
+    el.pairA = $('pair-a');
+    el.pairB = $('pair-b');
 
     var n = frameCount();
     if (!n) {
@@ -388,6 +457,7 @@ window.APP = (function () {
         markSelect(el.endSelect, dflt.to.name);
       }
     }
+    updatePairButtons();
 
     el.demoDate.textContent = META.date || '--';
     // 首屏写明"这就是校园范围"，避免被问"你这算的是整个海珠区吗"
