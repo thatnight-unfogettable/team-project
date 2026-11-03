@@ -15,9 +15,16 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-DATA_BUDGET = int(os.environ.get("DATA_BUDGET", "1600000"))
-SINGLE_FILE_MAX = int(os.environ.get("SINGLE_FILE_MAX", "1048576"))
-RAW_BUDGET = int(os.environ.get("RAW_BUDGET", "700000"))
+# 体积预算（2026-11-03 放宽：原 1,600,000 / 1,048,576 / 700,000）。
+# 放宽的原因：要在零网络前提下加"卫星底图 / 绿地色块 / 建筑功能标签"这类内容，
+# 1.6 MB 的总预算装不下（当时已用掉 1,130,744 B，只剩 470 KB）。
+# 仍然设上限、不设成无限：这些 .js 是 <script> 同步加载的，双击 index.html 时
+# 浏览器要一次性解析完；体积失控会让"秒开"这个卖点在低端机上直接失效。
+# 现状参考：1.08 MB 全量数据在 Node 里解析 + 执行 26 ms（本机实测），
+# 预算放到 8 MB 时最坏情况约 0.19 s，仍然可以接受；再往上就该改成按需加载了。
+DATA_BUDGET = int(os.environ.get("DATA_BUDGET", "8000000"))
+SINGLE_FILE_MAX = int(os.environ.get("SINGLE_FILE_MAX", "4194304"))
+RAW_BUDGET = int(os.environ.get("RAW_BUDGET", "4000000"))
 IN_CI = os.environ.get("GITHUB_ACTIONS") == "true"
 
 GENERATED = [
