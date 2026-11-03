@@ -14,11 +14,11 @@
 |---|---|
 | 目录 | `content/ data/ docs/ js/ tools/` + `index.html` + `styles.css` |
 | **没有** | `src/`、`tests/`、`config/`、`package.json` |
-| 前端 | `js/{proj,core,iso,trees,router,map,app}.js`（7 个），原生 JS + Canvas，经典 `<script>` |
+| 前端 | `js/{proj,core,iso,trees,plan,router,map,app}.js`（8 个），原生 JS + Canvas，经典 `<script>` |
 | 工具链 | `tools/build.py`（零第三方依赖，13 个子命令）、`tools/smoke.js`、`console-check.js`、`dpr-check.js`、`preview.py`、`tools/ci/*` |
 | 技术栈硬约束 | 无 npm / 无框架 / 无构建工具 / 无 CDN / 运行时零网络；`file://` 双击可用 |
 | 数据 | `data/raw/*.json` = 原始抓取（**只读**）；`data/*.js` = **生成物**（`window.DATA_*`） |
-| 测试 | `node tools/smoke.js`（173 条），退出码 0 才算过 |
+| 测试 | `node tools/smoke.js`（212 条），退出码 0 才算过 |
 | CI | **当前仓库没有工作流文件**（`.github/` 只剩 PR 模板）；要加 workflow 需 token 带 `workflow` scope（`gh auth refresh -s workflow`）。等价门禁：`node tools/smoke.js` + `python tools/ci/check_data.py` |
 | 协作 | **单人 + 1~N 个 AI agent**；历史上写的 hub relay / 4 人分工 / pytest **全部作废** |
 | 分支 | `main` 单分支；有第二个人/agent 长期参与时才开 `feat/<name>` + PR |
